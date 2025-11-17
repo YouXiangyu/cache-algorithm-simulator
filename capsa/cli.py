@@ -8,12 +8,354 @@ from .simulator import Simulator
 from .trace_generator import TraceGenerator, WorkloadType
 
 
-def _prompt_int(
-    message: str, default: int | None = None, minimum: int | None = None, maximum: int | None = None
-) -> int:
+LANGUAGE_PACKS = {
+    "zh": {
+        "welcome": "欢迎使用 CAPSA（缓存算法性能模拟与分析器）！",
+        "cache_prompt": "请输入缓存大小（示例 256）",
+        "algo_menu_title": "请选择要运行的缓存算法（可输入多个序号，用逗号或空格分隔）：",
+        "algo_hint": "示例：输入 1,3 表示运行 LRU 与 FIFO；输入 6 表示运行全部。",
+        "algo_options": {
+            "1": "LRU（最近最少使用）",
+            "2": "LFU（最不常用）",
+            "3": "FIFO（先进先出）",
+            "4": "ARC（自适应替换缓存）",
+            "5": "OPT（理论最优）",
+            "6": "ALL（全部算法）",
+        },
+        "algo_invalid": "无效的算法编号，请重新输入。",
+        "menu_invalid": "无效的选项，请重新输入。",
+        "workload_menu_title": "请选择工作负载类型：",
+        "workload_options": {"1": "静态 (Static)", "2": "动态 (Dynamic)", "3": "震荡 (Oscillating)"},
+        "configure_workload": "正在配置 {name} 工作负载...",
+        "total_requests": "总请求数",
+        "total_pages": "页面总数",
+        "hot_ratio": "热点数据占比",
+        "scan_ratio": "扫描数据占比",
+        "hot_set_size": "热点集大小",
+        "scan_length": "扫描长度",
+        "phases": "阶段数量",
+        "cycles": "震荡周期数",
+        "hot_burst": "每次热点访问次数",
+        "scan_burst": "每次扫描长度",
+        "hint_prefix": "【参数提示】",
+        "prompt_language": "请选择语言 / Please choose language (zh/en) [默认 zh]: ",
+        "invalid_language": "输入无效，请输入 zh 或 en。",
+        "int_error": "请输入有效的整数{limit}。",
+        "float_error": "请输入有效的数字{limit}。",
+        "run_algorithm": "开始运行 {name} 模拟...",
+        "input_suffix": "（默认 {default}）: ",
+        "input_suffix_plain": ": ",
+    },
+    "en": {
+        "welcome": "Welcome to CAPSA (Cache Algorithm Performance Simulator & Analyzer)!",
+        "cache_prompt": "Enter cache size (e.g. 256)",
+        "algo_menu_title": "Select cache algorithms to run (multiple indices allowed, comma or space separated):",
+        "algo_hint": "Example: 1,3 runs LRU and FIFO; enter 6 to run ALL.",
+        "algo_options": {
+            "1": "LRU (Least Recently Used)",
+            "2": "LFU (Least Frequently Used)",
+            "3": "FIFO (First-In First-Out)",
+            "4": "ARC (Adaptive Replacement Cache)",
+            "5": "OPT (Optimal / Belady)",
+            "6": "ALL (run every algorithm)",
+        },
+        "algo_invalid": "Invalid algorithm selection, please try again.",
+        "menu_invalid": "Invalid choice, please try again.",
+        "workload_menu_title": "Select workload type:",
+        "workload_options": {"1": "Static", "2": "Dynamic", "3": "Oscillating"},
+        "configure_workload": "Configuring {name} workload...",
+        "total_requests": "Total Requests",
+        "total_pages": "Total Pages",
+        "hot_ratio": "Hot Ratio",
+        "scan_ratio": "Scan Ratio",
+        "hot_set_size": "Hot Set Size",
+        "scan_length": "Scan Length",
+        "phases": "Phase Count",
+        "cycles": "Oscillation Cycles",
+        "hot_burst": "Hot Burst Length",
+        "scan_burst": "Scan Burst Length",
+        "hint_prefix": "[Parameter Tips]",
+        "prompt_language": "请选择语言 / Please choose language (zh/en) [default zh]: ",
+        "invalid_language": "Invalid input, please type zh or en.",
+        "int_error": "Please enter a valid integer{limit}.",
+        "float_error": "Please enter a valid number{limit}.",
+        "run_algorithm": "Running {name} simulation...",
+        "input_suffix": " (default {default}): ",
+        "input_suffix_plain": ": ",
+    },
+}
+
+WORKLOAD_INTROS = {
+    WorkloadType.STATIC: {
+        "zh": "【静态负载】热点集越大，重复访问越明显；扫描集越大，说明顺序读取占比越高。",
+        "en": "[Static] Larger hot sets amplify repeated hits; larger scan sets mean more sequential sweeps.",
+    },
+    WorkloadType.DYNAMIC: {
+        "zh": "【动态负载】热点阶段与扫描阶段交替出现，阶段越多，模式切换越频繁。",
+        "en": "[Dynamic] Alternates between hot bursts and scans; more phases mean more frequent shifts.",
+    },
+    WorkloadType.OSCILLATING: {
+        "zh": "【震荡负载】在热点与扫描之间快速切换，可模拟 thrashing 场景。",
+        "en": "[Oscillating] Rapidly switches between hot and scan phases to stress adaptability.",
+    },
+}
+
+PARAM_HINTS = {
+    WorkloadType.STATIC: [
+        {
+            "title": {"zh": "总请求数", "en": "Total Requests"},
+            "meaning": {"zh": "Trace 总长度", "en": "Total length of the trace"},
+            "range": "1 - 1,000,000",
+            "effect": {
+                "zh": "越大越平滑，但模拟时间更长",
+                "en": "Higher values smooth stats but take longer to simulate",
+            },
+        },
+        {
+            "title": {"zh": "页面总数", "en": "Total Pages"},
+            "meaning": {"zh": "潜在页面全集规模", "en": "Universe size of possible pages"},
+            "range": "2 - 100,000",
+            "effect": {
+                "zh": "越大越分散，命中率通常下降",
+                "en": "Larger means sparser reuse, often lowering hit rate",
+            },
+        },
+        {
+            "title": {"zh": "热点数据占比", "en": "Hot Ratio"},
+            "meaning": {"zh": "访问热点集合的概率", "en": "Probability of drawing from the hot set"},
+            "range": "0 - 1",
+            "effect": {
+                "zh": "越大越偏向重复访问",
+                "en": "Higher ratio favors repeated hits",
+            },
+        },
+        {
+            "title": {"zh": "扫描数据占比", "en": "Scan Ratio"},
+            "meaning": {"zh": "进入顺序扫描的概率", "en": "Probability of sequential scan"},
+            "range": "0 - 1",
+            "effect": {
+                "zh": "越大越容易冲掉缓存",
+                "en": "Higher ratio purges cache more often",
+            },
+        },
+    ],
+    WorkloadType.DYNAMIC: [
+        {
+            "title": {"zh": "总请求数", "en": "Total Requests"},
+            "meaning": {"zh": "Trace 总长度", "en": "Total length of the trace"},
+            "range": "1 - 1,000,000",
+            "effect": {
+                "zh": "越大越能观察长期趋势",
+                "en": "Larger captures longer-term trends",
+            },
+        },
+        {
+            "title": {"zh": "热点集大小", "en": "Hot Set Size"},
+            "meaning": {"zh": "热点阶段涉及的页面数", "en": "Unique pages during hot bursts"},
+            "range": "1 - 50,000",
+            "effect": {
+                "zh": "越大越接近均匀随机访问",
+                "en": "Bigger sets dilute temporal locality",
+            },
+        },
+        {
+            "title": {"zh": "扫描长度", "en": "Scan Length"},
+            "meaning": {"zh": "每次扫描访问的连续新页数", "en": "Length of each sequential sweep"},
+            "range": "1 - 100,000",
+            "effect": {
+                "zh": "越大越容易清空缓存",
+                "en": "Longer scans eject more cached pages",
+            },
+        },
+        {
+            "title": {"zh": "阶段数量", "en": "Phase Count"},
+            "meaning": {"zh": "热点/扫描交替的次数", "en": "How many hot/scan alternations"},
+            "range": "1 - 50",
+            "effect": {
+                "zh": "越大模式切换越频繁",
+                "en": "More phases mean faster oscillations",
+            },
+        },
+    ],
+    WorkloadType.OSCILLATING: [
+        {
+            "title": {"zh": "震荡周期数", "en": "Oscillation Cycles"},
+            "meaning": {"zh": "热点+扫描重复次数", "en": "How many hot+scan repetitions"},
+            "range": "1 - 50",
+            "effect": {
+                "zh": "越大持续时间越长",
+                "en": "Higher cycles extend total runtime",
+            },
+        },
+        {
+            "title": {"zh": "每次热点访问次数", "en": "Hot Burst Length"},
+            "meaning": {"zh": "单次热点阶段的请求数", "en": "Requests within each hot burst"},
+            "range": "1 - 50,000",
+            "effect": {
+                "zh": "越大越容易维持命中",
+                "en": "Longer bursts favor cache warmup",
+            },
+        },
+        {
+            "title": {"zh": "每次扫描长度", "en": "Scan Burst Length"},
+            "meaning": {"zh": "单次扫描阶段的请求数", "en": "Requests within each scan burst"},
+            "range": "1 - 50,000",
+            "effect": {
+                "zh": "越大越容易产生抖动",
+                "en": "Longer scans trigger more thrashing",
+            },
+        },
+        {
+            "title": {"zh": "热点集大小", "en": "Hot Set Size"},
+            "meaning": {"zh": "热点阶段会访问的不同页面数量", "en": "Unique hot pages per cycle"},
+            "range": "1 - 50,000",
+            "effect": {
+                "zh": "越大越稀释热点效果",
+                "en": "Bigger sets reduce locality benefits",
+            },
+        },
+    ],
+}
+
+PARAM_SPECS = {
+    WorkloadType.STATIC: [
+        {
+            "name": "total_requests",
+            "type": "int",
+            "default": 20000,
+            "min": 1,
+            "max": 1_000_000,
+            "prompt": {
+                "zh": "请输入总请求数 (1-1000000)",
+                "en": "Enter total requests (1-1,000,000)",
+            },
+        },
+        {
+            "name": "total_pages",
+            "type": "int",
+            "default": 1000,
+            "min": 2,
+            "max": 100_000,
+            "prompt": {"zh": "请输入页面总数 (2-100000)", "en": "Enter total pages (2-100,000)"},
+        },
+        {
+            "name": "hot_ratio",
+            "type": "float",
+            "default": 0.8,
+            "min": 0.0,
+            "max": 1.0,
+            "prompt": {"zh": "请输入热点数据占比 (0-1)", "en": "Enter hot ratio (0-1)"},
+        },
+        {
+            "name": "scan_ratio",
+            "type": "float",
+            "default": 0.2,
+            "min": 0.0,
+            "max": 1.0,
+            "prompt": {"zh": "请输入扫描数据占比 (0-1)", "en": "Enter scan ratio (0-1)"},
+        },
+    ],
+    WorkloadType.DYNAMIC: [
+        {
+            "name": "total_requests",
+            "type": "int",
+            "default": 20000,
+            "min": 1,
+            "max": 1_000_000,
+            "prompt": {
+                "zh": "请输入总请求数 (1-1000000)",
+                "en": "Enter total requests (1-1,000,000)",
+            },
+        },
+        {
+            "name": "hot_set_size",
+            "type": "int",
+            "default": 100,
+            "min": 1,
+            "max": 50_000,
+            "prompt": {"zh": "请输入热点集大小 (1-50000)", "en": "Enter hot set size (1-50,000)"},
+        },
+        {
+            "name": "scan_length",
+            "type": "int",
+            "default": 500,
+            "min": 1,
+            "max": 100_000,
+            "prompt": {"zh": "请输入扫描长度 (1-100000)", "en": "Enter scan length (1-100,000)"},
+        },
+        {
+            "name": "phases",
+            "type": "int",
+            "default": 4,
+            "min": 1,
+            "max": 50,
+            "prompt": {"zh": "请输入阶段数量 (1-50)", "en": "Enter number of phases (1-50)"},
+        },
+    ],
+    WorkloadType.OSCILLATING: [
+        {
+            "name": "cycles",
+            "type": "int",
+            "default": 5,
+            "min": 1,
+            "max": 50,
+            "prompt": {"zh": "请输入震荡周期数 (1-50)", "en": "Enter oscillation cycles (1-50)"},
+        },
+        {
+            "name": "hot_burst",
+            "type": "int",
+            "default": 2000,
+            "min": 1,
+            "max": 50_000,
+            "prompt": {
+                "zh": "请输入每次热点访问次数 (1-50000)",
+                "en": "Enter hot burst length (1-50,000)",
+            },
+        },
+        {
+            "name": "scan_burst",
+            "type": "int",
+            "default": 2000,
+            "min": 1,
+            "max": 50_000,
+            "prompt": {
+                "zh": "请输入每次扫描长度 (1-50000)",
+                "en": "Enter scan burst length (1-50,000)",
+            },
+        },
+        {
+            "name": "hot_set_size",
+            "type": "int",
+            "default": 100,
+            "min": 1,
+            "max": 50_000,
+            "prompt": {"zh": "请输入热点集大小 (1-50000)", "en": "Enter hot set size (1-50,000)"},
+        },
+    ],
+}
+
+
+def _select_language() -> str:
     while True:
-        raw = input(f"{message} " + (f"[默认 {default}]: " if default is not None else ": "))
-        raw = raw.strip()
+        raw = input(LANGUAGE_PACKS["zh"]["prompt_language"]).strip().lower()
+        if not raw:
+            return "zh"
+        if raw in ("zh", "en"):
+            return raw
+        print(LANGUAGE_PACKS["zh"]["invalid_language"])
+
+
+def _prompt_int(
+    message: str,
+    language: str,
+    default: int | None = None,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    texts = LANGUAGE_PACKS[language]
+    suffix = texts["input_suffix"] if default is not None else texts["input_suffix_plain"]
+    while True:
+        raw = input(f"{message}{suffix.format(default=default)}").strip()
         if not raw and default is not None:
             raw = str(default)
         try:
@@ -27,14 +369,20 @@ def _prompt_int(
             limit = ""
             if minimum is not None or maximum is not None:
                 limit = f" ({minimum or '-∞'} - {maximum or '∞'})"
-            print(f"请输入有效的整数{limit}。")
+            print(texts["int_error"].format(limit=limit))
 
 
 def _prompt_float(
-    message: str, default: float, minimum: float | None = None, maximum: float | None = None
+    message: str,
+    language: str,
+    default: float,
+    minimum: float | None = None,
+    maximum: float | None = None,
 ) -> float:
+    texts = LANGUAGE_PACKS[language]
+    suffix = texts["input_suffix"]
     while True:
-        raw = input(f"{message} [默认 {default}]: ").strip()
+        raw = input(f"{message}{suffix.format(default=default)}").strip()
         if not raw:
             return default
         try:
@@ -48,69 +396,66 @@ def _prompt_float(
             limit = ""
             if minimum is not None or maximum is not None:
                 limit = f" ({minimum or '-∞'} - {maximum or '∞'})"
-            print(f"请输入有效的数字{limit}。")
+            print(texts["float_error"].format(limit=limit))
 
 
-def _select_from_menu(message: str, options: Dict[str, str]) -> str:
-    print(message)
+def _select_from_menu(message: str, options: Dict[str, str], language: str) -> str:
+    print(f"\n{message}")
     for key, text in options.items():
-        print(f"{key}: {text}")
+        print(f"  {key}: {text}")
+    texts = LANGUAGE_PACKS[language]
     while True:
         choice = input("> ").strip()
         if choice in options:
             return choice
-        print("无效的选项，请重新选择。")
+        print(texts["menu_invalid"])
 
 
-def _print_hint(title: str, meaning: str, range_text: str, effect: str) -> None:
-    print(f"- {title}: {meaning}。范围：{range_text}。{effect}")
+def _print_hint(title: str, meaning: str, range_text: str, effect: str, language: str) -> None:
+    bullet = "-"
+    connector = "。范围：" if language == "zh" else ". Range: "
+    tail = "。" if language == "zh" else ". "
+    print(f"{bullet} {title}: {meaning}{connector}{range_text}{tail}{effect}")
 
 
-def _collect_workload_params(workload_type: WorkloadType) -> Dict[str, int | float]:
-    if workload_type is WorkloadType.STATIC:
-        print(
-            "静态负载说明：热点集越大意味着更多页面会被频繁重复访问；扫描集越大表示一次性顺序读取的数据更多。"
+def _collect_workload_params(workload_type: WorkloadType, language: str) -> Dict[str, int | float]:
+    intro = WORKLOAD_INTROS[workload_type][language]
+    texts = LANGUAGE_PACKS[language]
+    print(f"\n{texts['hint_prefix']} {intro}")
+    for hint in PARAM_HINTS[workload_type]:
+        _print_hint(
+            hint["title"][language],
+            hint["meaning"][language],
+            hint["range"],
+            hint["effect"][language],
+            language,
         )
-        _print_hint("总请求数", "Trace 长度", "1 - 1,000,000", "越大越平滑，运行时间也更长")
-        _print_hint("页面总数", "潜在页面的全集规模", "2 - 100,000", "越大越分散，命中率可能下降")
-        _print_hint("热点数据占比", "热点访问概率", "0.0 - 1.0", "越大越偏向重复访问")
-        _print_hint("扫描数据占比", "顺序扫描概率", "0.0 - 1.0", "越大越考验缓存对突发扫描的适应力")
-        return {
-            "total_requests": _prompt_int("请输入总请求数 (1-1000000)", 20000, minimum=1, maximum=1_000_000),
-            "total_pages": _prompt_int("请输入页面总数 (2-100000)", 1000, minimum=2, maximum=100_000),
-            "hot_ratio": _prompt_float("请输入热点数据占比 (0-1)", 0.8, minimum=0.0, maximum=1.0),
-            "scan_ratio": _prompt_float("请输入扫描数据占比 (0-1)", 0.2, minimum=0.0, maximum=1.0),
-        }
-    if workload_type is WorkloadType.DYNAMIC:
-        print(
-            "动态负载说明：热点阶段反复访问固定集合，扫描阶段顺序访问新页面；阶段越多，热点与扫描交替越频繁。"
-        )
-        _print_hint("总请求数", "Trace 长度", "1 - 1,000,000", "越大越能看到长期趋势")
-        _print_hint("热点集大小", "被高频访问的页面数量", "1 - 50,000", "越大越接近均匀随机访问")
-        _print_hint("扫描长度", "每次顺序扫描的页数", "1 - 100,000", "越大越容易冲掉缓存内容")
-        _print_hint("阶段数量", "热点/扫描循环的次数", "1 - 50", "越大越频繁切换访问模式")
-        return {
-            "total_requests": _prompt_int("请输入总请求数 (1-1000000)", 20000, minimum=1, maximum=1_000_000),
-            "hot_set_size": _prompt_int("请输入热点集大小 (1-50000)", 100, minimum=1, maximum=50_000),
-            "scan_length": _prompt_int("请输入扫描长度 (1-100000)", 500, minimum=1, maximum=100_000),
-            "phases": _prompt_int("请输入阶段数量 (1-50)", 4, minimum=1, maximum=50),
-        }
-    print(
-        "震荡负载说明：周期性在热点访问和扫描访问之间来回切换，切换越频繁越容易产生抖动（thrashing）。"
-    )
-    _print_hint("震荡周期数", "热点+扫描的重复次数", "1 - 50", "越大持续时间越长")
-    _print_hint("每次热点访问次数", "每个周期内连续热点请求数量", "1 - 50,000", "越大越有利于缓存保持命中")
-    _print_hint("每次扫描长度", "每个周期的顺序扫描规模", "1 - 50,000", "越大越容易清空缓存内容")
-    _print_hint("热点集大小", "热点阶段涉及的不同页面数量", "1 - 50,000", "越大越稀释热点效应")
-    return {
-        "cycles": _prompt_int("请输入震荡周期数 (1-50)", 5, minimum=1, maximum=50),
-        "hot_burst": _prompt_int("请输入每次热点访问次数 (1-50000)", 2000, minimum=1, maximum=50_000),
-        "scan_burst": _prompt_int("请输入每次扫描长度 (1-50000)", 2000, minimum=1, maximum=50_000),
-        "hot_set_size": _prompt_int("请输入热点集大小 (1-50000)", 100, minimum=1, maximum=50_000),
-    }
+
+    params: Dict[str, int | float] = {}
+    for spec in PARAM_SPECS[workload_type]:
+        prompt_text = spec["prompt"][language]
+        if spec["type"] == "int":
+            params[spec["name"]] = _prompt_int(
+                prompt_text,
+                language,
+                default=spec["default"],
+                minimum=spec["min"],
+                maximum=spec["max"],
+            )
+        else:
+            params[spec["name"]] = _prompt_float(
+                prompt_text,
+                language,
+                default=spec["default"],
+                minimum=spec["min"],
+                maximum=spec["max"],
+            )
+    return params
 
 
-def _build_cache_factories(cache_size: int, trace: Iterable[int]) -> Dict[str, Callable[[], OPTCache | ARCCache | LRUCache | LFUCache | FIFOCache]]:
+def _build_cache_factories(
+    cache_size: int, trace: Iterable[int]
+) -> Dict[str, Callable[[], OPTCache | ARCCache | LRUCache | LFUCache | FIFOCache]]:
     trace_list = list(trace)
     return {
         "LRU": lambda: LRUCache(cache_size),
@@ -121,30 +466,47 @@ def _build_cache_factories(cache_size: int, trace: Iterable[int]) -> Dict[str, C
     }
 
 
+def _parse_algorithm_selection(raw_input: str, language: str) -> List[str]:
+    mapping = {"1": "LRU", "2": "LFU", "3": "FIFO", "4": "ARC", "5": "OPT"}
+    cleaned = raw_input.replace(",", " ").split()
+    selected = []
+    for token in cleaned:
+        if token not in mapping:
+            print(LANGUAGE_PACKS[language]["algo_invalid"])
+            return []
+        algo = mapping[token]
+        if algo not in selected:
+            selected.append(algo)
+    if not selected:
+        print(LANGUAGE_PACKS[language]["algo_invalid"])
+    return selected
+
+
+def _prompt_algorithm_selection(language: str) -> List[str] | None:
+    texts = LANGUAGE_PACKS[language]
+    options = texts["algo_options"]
+    print(f"\n{texts['algo_menu_title']}")
+    for key, description in options.items():
+        print(f"  {key}: {description}")
+    print(texts["algo_hint"])
+    while True:
+        choice = input("> ").strip()
+        if choice == "6":
+            return None
+        selection = _parse_algorithm_selection(choice, language)
+        if selection:
+            return selection
+
+
 def run_cli() -> None:
-    print("Welcome to the Cache Algorithm Performance Simulator & Analyzer (CAPSA)!")
-    cache_size = _prompt_int("请输入缓存大小 (例如 256)", 256, minimum=1)
+    language = _select_language()
+    texts = LANGUAGE_PACKS[language]
+    print(f"\n{texts['welcome']}\n" + "=" * 60)
+    cache_size = _prompt_int(texts["cache_prompt"], language, default=256, minimum=1)
 
-    algo_choice = _select_from_menu(
-        "请选择要运行的缓存算法：",
-        {
-            "1": "LRU",
-            "2": "LFU",
-            "3": "FIFO",
-            "4": "ARC",
-            "5": "OPT",
-            "6": "ALL",
-        },
-    )
+    algo_selection = _prompt_algorithm_selection(language)
 
-    workload_choice = _select_from_menu(
-        "请选择工作负载类型：",
-        {
-            "1": "Static",
-            "2": "Dynamic",
-            "3": "Oscillating",
-        },
-    )
+    workload_choice = _select_from_menu(texts["workload_menu_title"], texts["workload_options"], language)
 
     workload_map = {
         "1": WorkloadType.STATIC,
@@ -152,26 +514,26 @@ def run_cli() -> None:
         "3": WorkloadType.OSCILLATING,
     }
     workload_type = workload_map[workload_choice]
-    print(f"配置 {workload_type.value.upper()} 工作负载...")
-    workload_params = _collect_workload_params(workload_type)
+    workload_name_display = texts["workload_options"][workload_choice]
+    print(f"\n{texts['configure_workload'].format(name=workload_name_display.upper())}")
+    workload_params = _collect_workload_params(workload_type, language)
 
     trace_generator = TraceGenerator(workload_type, workload_params)
     trace = trace_generator.generate()
 
     factories = _build_cache_factories(cache_size, trace)
 
-    if algo_choice == "6":
+    if algo_selection is None:
         selected_algorithms = list(factories.keys())
     else:
-        mapping = {"1": "LRU", "2": "LFU", "3": "FIFO", "4": "ARC", "5": "OPT"}
-        selected_algorithms = [mapping[algo_choice]]
+        selected_algorithms = algo_selection
 
     simulator = Simulator(cache_size, trace)
     results = []
 
     for name in selected_algorithms:
         cache = factories[name]()
-        print(f"运行 {name} 模拟...")
+        print(f"\n{texts['run_algorithm'].format(name=name)}")
         result = simulator.run(name, cache)
         results.append(result)
 
