@@ -4,7 +4,7 @@ from typing import Callable, Dict, Iterable, List
 
 from .caches import ARCCache, FIFOCache, LFUCache, LRUCache, OPTCache
 from .metrics import MetricsCollector, ReportConfig
-from .simulator import Simulator
+from .simulator import Simulator, SimulationResult
 from .trace_generator import TraceGenerator, WorkloadType
 
 
@@ -45,6 +45,10 @@ LANGUAGE_PACKS = {
         "run_algorithm": "开始运行 {name} 模拟...",
         "input_suffix": "（默认 {default}）: ",
         "input_suffix_plain": ": ",
+        "run_count_prompt": "运行次数 (1=单次运行, >1=批量测试) [默认 1]",
+        "batch_start": "开始批量测试...",
+        "run": "运行",
+        "batch_complete": "批量测试完成，正在汇总结果...",
     },
     "en": {
         "welcome": "Welcome to CAPSA (Cache Algorithm Performance Simulator & Analyzer)!",
@@ -82,6 +86,10 @@ LANGUAGE_PACKS = {
         "run_algorithm": "Running {name} simulation...",
         "input_suffix": " (default {default}): ",
         "input_suffix_plain": ": ",
+        "run_count_prompt": "Number of runs (1=single, >1=batch) [default 1]",
+        "batch_start": "Starting batch testing...",
+        "run": "Run",
+        "batch_complete": "Batch testing complete, aggregating results...",
     },
 }
 
@@ -518,33 +526,65 @@ def run_cli() -> None:
     print(f"\n{texts['configure_workload'].format(name=workload_name_display.upper())}")
     workload_params = _collect_workload_params(workload_type, language)
 
-    trace_generator = TraceGenerator(workload_type, workload_params)
-    trace = trace_generator.generate()
+    # 询问运行次数
+    run_count = _prompt_int(
+        texts.get("run_count_prompt", "运行次数 (1=单次, >1=批量测试) [默认 1]"),
+        language,
+        default=1,
+        minimum=1,
+        maximum=10000,
+    )
 
-    factories = _build_cache_factories(cache_size, trace)
-
+    # 确定要运行的算法列表
     if algo_selection is None:
-        selected_algorithms = list(factories.keys())
+        selected_algorithms = ["LRU", "LFU", "FIFO", "ARC", "OPT"]
     else:
         selected_algorithms = algo_selection
 
-    simulator = Simulator(cache_size, trace)
-    results = []
+    # 收集所有运行的结果
+    all_results_by_algorithm: Dict[str, List[SimulationResult]] = {name: [] for name in selected_algorithms}
 
-    for name in selected_algorithms:
-        cache = factories[name]()
-        print(f"\n{texts['run_algorithm'].format(name=name)}")
-        result = simulator.run(name, cache)
-        results.append(result)
+    print(f"\n{texts.get('batch_start', '开始批量测试...')}")
+    for run_idx in range(run_count):
+        if run_count > 1:
+            print(f"\n[{texts.get('run', '运行')} {run_idx + 1}/{run_count}]")
 
-    report_config = ReportConfig(
-        cache_size=cache_size,
-        workload_name=workload_type.value.title(),
-        workload_params=workload_params,
-        total_requests=len(trace),
-    )
-    collector = MetricsCollector(report_config)
+        # 每次运行使用不同的随机种子生成新的trace
+        trace_generator = TraceGenerator(workload_type, workload_params, seed=None if run_count == 1 else run_idx)
+        trace = trace_generator.generate()
 
-    print("\n" + collector.build_report(results))
+        factories = _build_cache_factories(cache_size, trace)
+        simulator = Simulator(cache_size, trace)
+
+        for name in selected_algorithms:
+            cache = factories[name]()
+            if run_count == 1:
+                print(f"\n{texts['run_algorithm'].format(name=name)}")
+            result = simulator.run(name, cache)
+            all_results_by_algorithm[name].append(result)
+
+    # 汇总结果
+    if run_count == 1:
+        # 单次运行：直接使用原始结果
+        results = [all_results_by_algorithm[name][0] for name in selected_algorithms]
+        report_config = ReportConfig(
+            cache_size=cache_size,
+            workload_name=workload_type.value.title(),
+            workload_params=workload_params,
+            total_requests=len(trace),
+        )
+        collector = MetricsCollector(report_config)
+        print("\n" + collector.build_report(results))
+    else:
+        # 批量运行：计算平均值
+        print(f"\n{texts.get('batch_complete', '批量测试完成，正在汇总结果...')}")
+        report_config = ReportConfig(
+            cache_size=cache_size,
+            workload_name=workload_type.value.title(),
+            workload_params=workload_params,
+            total_requests=len(trace),  # 使用最后一次的trace长度作为参考
+        )
+        collector = MetricsCollector(report_config)
+        print("\n" + collector.build_batch_report(all_results_by_algorithm, run_count))
 
 
