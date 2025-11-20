@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable, Dict, Iterable, List
 
-from .caches import ARCCache, FIFOCache, LFUCache, LRUCache, OPTCache
+from .caches import ARCCache, FIFOCache, LFUCache, LRUCache, OPTCache, TwoQCache
 from .metrics import MetricsCollector, ReportConfig
 from .simulator import Simulator, SimulationResult
 from .trace_generator import TraceGenerator, WorkloadType
@@ -13,14 +13,15 @@ LANGUAGE_PACKS = {
         "welcome": "欢迎使用 CAPSA（缓存算法性能模拟与分析器）！",
         "cache_prompt": "请输入缓存大小（示例 256）",
         "algo_menu_title": "请选择要运行的缓存算法（可输入多个序号，用逗号或空格分隔）：",
-        "algo_hint": "示例：输入 1,3 表示运行 LRU 与 FIFO；输入 6 表示运行全部。",
+        "algo_hint": "示例：输入 1,3 表示运行 LRU 与 FIFO；输入 7 表示运行全部。",
         "algo_options": {
             "1": "LRU（最近最少使用）",
             "2": "LFU（最不常用）",
             "3": "FIFO（先进先出）",
             "4": "ARC（自适应替换缓存）",
             "5": "OPT（理论最优）",
-            "6": "ALL（全部算法）",
+            "6": "2Q（双队列）",
+            "7": "ALL（全部算法）",
         },
         "algo_invalid": "无效的算法编号，请重新输入。",
         "menu_invalid": "无效的选项，请重新输入。",
@@ -54,14 +55,15 @@ LANGUAGE_PACKS = {
         "welcome": "Welcome to CAPSA (Cache Algorithm Performance Simulator & Analyzer)!",
         "cache_prompt": "Enter cache size (e.g. 256)",
         "algo_menu_title": "Select cache algorithms to run (multiple indices allowed, comma or space separated):",
-        "algo_hint": "Example: 1,3 runs LRU and FIFO; enter 6 to run ALL.",
+        "algo_hint": "Example: 1,3 runs LRU and FIFO; enter 7 to run ALL.",
         "algo_options": {
             "1": "LRU (Least Recently Used)",
             "2": "LFU (Least Frequently Used)",
             "3": "FIFO (First-In First-Out)",
             "4": "ARC (Adaptive Replacement Cache)",
             "5": "OPT (Optimal / Belady)",
-            "6": "ALL (run every algorithm)",
+            "6": "2Q (Two Queues)",
+            "7": "ALL (run every algorithm)",
         },
         "algo_invalid": "Invalid algorithm selection, please try again.",
         "menu_invalid": "Invalid choice, please try again.",
@@ -463,7 +465,7 @@ def _collect_workload_params(workload_type: WorkloadType, language: str) -> Dict
 
 def _build_cache_factories(
     cache_size: int, trace: Iterable[int]
-) -> Dict[str, Callable[[], OPTCache | ARCCache | LRUCache | LFUCache | FIFOCache]]:
+) -> Dict[str, Callable[[], OPTCache | ARCCache | LRUCache | LFUCache | FIFOCache | TwoQCache]]:
     trace_list = list(trace)
     return {
         "LRU": lambda: LRUCache(cache_size),
@@ -471,11 +473,12 @@ def _build_cache_factories(
         "FIFO": lambda: FIFOCache(cache_size),
         "ARC": lambda: ARCCache(cache_size),
         "OPT": lambda: OPTCache(cache_size, trace_list),
+        "2Q": lambda: TwoQCache(cache_size),
     }
 
 
 def _parse_algorithm_selection(raw_input: str, language: str) -> List[str]:
-    mapping = {"1": "LRU", "2": "LFU", "3": "FIFO", "4": "ARC", "5": "OPT"}
+    mapping = {"1": "LRU", "2": "LFU", "3": "FIFO", "4": "ARC", "5": "OPT", "6": "2Q"}
     cleaned = raw_input.replace(",", " ").split()
     selected = []
     for token in cleaned:
@@ -499,7 +502,7 @@ def _prompt_algorithm_selection(language: str) -> List[str] | None:
     print(texts["algo_hint"])
     while True:
         choice = input("> ").strip()
-        if choice == "6":
+        if choice == "7":
             return None
         selection = _parse_algorithm_selection(choice, language)
         if selection:
@@ -537,7 +540,7 @@ def run_cli() -> None:
 
     # 确定要运行的算法列表
     if algo_selection is None:
-        selected_algorithms = ["LRU", "LFU", "FIFO", "ARC", "OPT"]
+        selected_algorithms = ["LRU", "LFU", "FIFO", "ARC", "OPT", "2Q"]
     else:
         selected_algorithms = algo_selection
 
