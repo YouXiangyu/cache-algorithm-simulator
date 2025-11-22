@@ -20,11 +20,17 @@ class ARCCache(Cache):
         self.misses = 0
 
     def _move_to_T2(self, page_id: int) -> None:
-        self.T2[page_id] = None
+        """将页面移到T2末尾（LRU更新）。"""
+        # 如果页面已在T2中，移到末尾；否则添加到末尾
+        if page_id in self.T2:
+            self.T2.move_to_end(page_id)
+        else:
+            self.T2[page_id] = None
 
-    def _replace(self, page_id: int) -> None:
+    def _replace(self, page_id: int | None) -> None:
+        """执行替换操作，腾出空间。"""
         if self.T1 and (
-            len(self.T1) > self.p or (page_id in self.B2 and len(self.T1) == self.p)
+            len(self.T1) > self.p or (page_id is not None and page_id in self.B2 and len(self.T1) == self.p)
         ):
             old, _ = self.T1.popitem(last=False)
             self.B1[old] = None
@@ -52,14 +58,17 @@ class ARCCache(Cache):
         self.p = max(0, self.p - delta)
 
     def _ensure_space_for_miss(self) -> None:
+        """确保有空间容纳新页面。"""
         total = len(self.T1) + len(self.B1)
         if total == self.size:
             if len(self.T1) < self.size:
                 self.B1.popitem(last=False)
                 self._replace(None)
             else:
-                old, _ = self.T1.popitem(last=False) #表示弹出“最早的项”
-                # self.B1[old] = None
+                old, _ = self.T1.popitem(last=False)  # 表示弹出"最早的项"
+                self.B1[old] = None  # 修复：将被淘汰的页面加入B1
+                if len(self.B1) > self.size:
+                    self.B1.popitem(last=False)
         else:
             grand_total = total + len(self.T2) + len(self.B2)
             if grand_total >= self.size:
@@ -67,7 +76,6 @@ class ARCCache(Cache):
                     self.B2.popitem(last=False)
                 self._replace(None)
 
-# 应该没有问题
     def access(self, page_id: int) -> bool:
         if page_id in self.T1:
             self.T1.pop(page_id, None)
@@ -76,8 +84,8 @@ class ARCCache(Cache):
             return True
 
         if page_id in self.T2:
-            self.T2.pop(page_id, None)
-            self._move_to_T2(page_id)
+            # 修复：直接使用move_to_end更新LRU位置
+            self.T2.move_to_end(page_id)
             self.hits += 1
             return True
 
@@ -86,14 +94,14 @@ class ARCCache(Cache):
         if page_id in self.B1:
             self._adapt_p_on_b1_hit()
             self._replace(page_id)
-            self.B1.pop(page_id, None)
+            self.B1.pop(page_id, None)  # 修复：移除多余的B2.pop操作
             self._move_to_T2(page_id)
             return False
 
         if page_id in self.B2:
             self._adapt_p_on_b2_hit()
             self._replace(page_id)
-            self.B2.pop(page_id, None)
+            self.B2.pop(page_id, None)  # 修复：移除多余的B1.pop操作
             self._move_to_T2(page_id)
             return False
 
