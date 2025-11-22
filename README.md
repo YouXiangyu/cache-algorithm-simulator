@@ -20,9 +20,7 @@ CAPSA 是一个轻量级缓存性能模拟器，用于在相同的访问序列�
 
 ## 快速启动
 
-### 安装
-
-无需安装，直接使用：
+### 命令行:
 
 ```bash
 # 克隆或下载项目后，直接运行
@@ -40,7 +38,7 @@ python main.py -1          # 运行负载 1
 python main.py -1 -3 -5    # 运行负载 1、3 和 5
 python main.py -9          # 运行负载 9
 
-# 生成跟踪文件（可选）
+# 生成实际负载（可选）
 python generate_fixed_traces.py
 ```
 
