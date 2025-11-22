@@ -9,6 +9,8 @@ from .cache_base import Cache
 
 @dataclass
 class SimulationResult:
+    """一次运行后的模拟统计信息，将由MetricsCollector渲染。"""
+
     algorithm: str
     cache_size: int
     total_requests: int
@@ -19,21 +21,24 @@ class SimulationResult:
 
     @property
     def hit_rate(self) -> float:
+        """命中率（命中数 / 总请求数），以百分比返回。"""
         return (self.hits / self.total_requests) * 100 if self.total_requests else 0.0
 
     @property
     def avg_overhead_ns(self) -> float:
+        """平均计算开销，显示算法复杂度而非实际I/O时间。"""
         return self.elapsed_ns / self.total_requests if self.total_requests else 0.0
 
 
 class Simulator:
-    """负责驱动缓存访问并记录指标。"""
+    """简单模拟器：顺序读取跟踪序列，提供给缓存策略，累积指标。"""
 
     def __init__(self, cache_size: int, trace: Iterable[int]):
         self.cache_size = cache_size
         self.trace: List[int] = list(trace)
 
     def run(self, algorithm_name: str, cache: Cache) -> SimulationResult:
+        """在指定的缓存实例上运行完整跟踪序列并返回统计信息。"""
         hits = 0
         misses = 0
         elapsed = 0

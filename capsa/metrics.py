@@ -20,7 +20,7 @@ class ReportConfig:
 
 
 class MetricsCollector:
-    """负责把原始指标转换为人类可读的报告。"""
+    """将原始指标转换为人类可读的报告。"""
 
     def __init__(self, config: ReportConfig):
         self.config = config
@@ -42,7 +42,7 @@ class MetricsCollector:
 
     def _build_table(self, headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
         if not rows:
-            return "（暂无数据）"
+            return "(No data)"
         widths = [
             max(len(str(headers[i])), *(len(str(row[i])) for row in rows)) for i in range(len(headers))
         ]
@@ -98,14 +98,14 @@ class MetricsCollector:
             "",
             "=" * 60,
             "[Summary]",
-            "分析完成，详见各算法段落与排名表。",
+            "Analysis complete. See algorithm sections and ranking tables above.",
             self._build_rankings(result_list),
             "=" * 60,
         ]
         return "\n".join(header + [body] + summary)
 
     def _calculate_stats(self, values: List[float]) -> Dict[str, float]:
-        """计算统计指标：平均值、标准差、最小值、最大值"""
+        """计算统计信息：均值、标准差、最小值、最大值"""
         if not values:
             return {"mean": 0.0, "std": 0.0, "min": 0.0, "max": 0.0}
         mean = sum(values) / len(values)
@@ -121,7 +121,7 @@ class MetricsCollector:
     def build_batch_report(
         self, all_results_by_algorithm: Dict[str, List[SimulationResult]], run_count: int
     ) -> str:
-        """生成批量测试的汇总报告"""
+        """生成批量测试摘要报告"""
         header = [
             "=" * 60,
             "CAPSA: Batch Simulation Performance Report",
@@ -136,7 +136,7 @@ class MetricsCollector:
             "",
         ]
 
-        # 计算每个算法的统计指标
+        # Calculate statistics for each algorithm
         aggregated_results = []
         for algo_name, results in all_results_by_algorithm.items():
             hit_rates = [r.hit_rate for r in results]
@@ -158,7 +158,7 @@ class MetricsCollector:
                 }
             )
 
-        # 生成详细报告
+        # Generate detailed report
         body_lines = []
         for agg in aggregated_results:
             body_lines.append("------------------------------------------------------------")
@@ -182,7 +182,7 @@ class MetricsCollector:
             )
             body_lines.append("")
 
-        # 生成排名表（基于平均值）
+        # Generate ranking tables (based on mean values)
         hit_rank = sorted(aggregated_results, key=lambda x: x["hit_rate"]["mean"], reverse=True)
         hit_rows = [
             (
@@ -209,7 +209,7 @@ class MetricsCollector:
             "",
             "=" * 60,
             "[Summary - Average Performance]",
-            f"基于 {run_count} 次运行的平均值：",
+            f"Based on average over {run_count} runs:",
             "",
             "[Hit-Rate Ranking (Mean ± Std)]",
             self._build_table(("Rank", "Algorithm", "Hit Rate", "Std Dev"), hit_rows),
