@@ -11,7 +11,7 @@ class ARCCache(Cache):
 
     def __init__(self, size: int):
         super().__init__(size)
-        self.T1: "OrderedDict[int, None]" = OrderedDict()
+        self.T1: "OrderedDict[int, None]" = OrderedDict()  # 使用Ordered dict来实现LRU队列
         self.T2: "OrderedDict[int, None]" = OrderedDict()
         self.B1: "OrderedDict[int, None]" = OrderedDict()
         self.B2: "OrderedDict[int, None]" = OrderedDict()

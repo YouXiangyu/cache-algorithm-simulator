@@ -9,10 +9,12 @@ from ..cache_base import Cache
 class TwoQCache(Cache):
     """2Q 双队列缓存策略，利用 FIFO 热身队列与 LRU 主队列结合降低缓存污染。"""
 
-    def __init__(self, size: int, kin: int | None = None, kout: int | None = None):
+    def __init__(self, size: int):
         super().__init__(size)
-        self.kin = max(1, min(size, kin if kin is not None else max(1, size // 4)))
-        self.kout = max(1, kout if kout is not None else size)
+        self.size = size
+        self.size_in = max(1, int(size * 0.5))
+        self.size_out = max(1, int(size * 0.5))
+        self.size_am = max(1, size - self.size_in)
         self.A1in: "OrderedDict[int, None]" = OrderedDict()  # 仅访问过一次的页（FIFO）
         self.A1out: "OrderedDict[int, None]" = OrderedDict()  # 最近被淘汰的冷页面记录
         self.Am: "OrderedDict[int, None]" = OrderedDict()  # 访问至少两次的热页面（LRU）
@@ -24,25 +26,15 @@ class TwoQCache(Cache):
             return
         victim, _ = self.A1in.popitem(last=False)
         self.A1out[victim] = None
-        if len(self.A1out) > self.kout:
+        if len(self.A1out) > self.size_out:
             self.A1out.popitem(last=False)
 
     def _evict_from_am(self) -> None:
         if self.Am:
             self.Am.popitem(last=False)
-        else:
-            self._evict_from_a1in()
+        #else:
+           # self._evict_from_a1in()
 
-    def _ensure_space(self) -> None:
-        """确保 A1in + Am 不超过缓存容量。"""
-        if len(self.A1in) + len(self.Am) < self.size:
-            return
-        if len(self.A1in) >= self.kin:
-            self._evict_from_a1in()
-        elif self.Am:
-            self._evict_from_am()
-        else:
-            self._evict_from_a1in()
 
     def access(self, page_id: int) -> bool:
         if page_id in self.Am:
@@ -52,22 +44,21 @@ class TwoQCache(Cache):
 
         if page_id in self.A1in:
             self.hits += 1
-            # 第二次访问，从 FIFO 升级到主队列
-            self.A1in.pop(page_id, None)
-            self.Am[page_id] = None
             return True
 
         self.misses += 1
 
         if page_id in self.A1out:
             # 命中 ghost，视为重用：腾挪空间并放入主队列
-            self._ensure_space()
+            if len(self.Am) >= self.size_am:
+                self._evict_from_am()
             self.A1out.pop(page_id, None)
             self.Am[page_id] = None
             return False
 
         # 全新页面，进入 A1in，满了按 2Q 规则淘汰
-        self._ensure_space()
+        if len(self.A1in) >= self.size_in:
+            self._evict_from_a1in()
         self.A1in[page_id] = None
         return False
 
