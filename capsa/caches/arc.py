@@ -58,8 +58,8 @@ class ARCCache(Cache):
                 self.B1.popitem(last=False)
                 self._replace(None)
             else:
-                old, _ = self.T1.popitem(last=False)
-                self.B1[old] = None
+                old, _ = self.T1.popitem(last=False) #表示弹出“最早的项”
+                # self.B1[old] = None
         else:
             grand_total = total + len(self.T2) + len(self.B2)
             if grand_total >= self.size:
@@ -67,6 +67,7 @@ class ARCCache(Cache):
                     self.B2.popitem(last=False)
                 self._replace(None)
 
+# 应该没有问题
     def access(self, page_id: int) -> bool:
         if page_id in self.T1:
             self.T1.pop(page_id, None)
