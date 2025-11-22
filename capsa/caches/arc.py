@@ -65,10 +65,8 @@ class ARCCache(Cache):
                 self.B1.popitem(last=False)
                 self._replace(None)
             else:
-                old, _ = self.T1.popitem(last=False)  # 表示弹出"最早的项"
-                self.B1[old] = None  # 修复：将被淘汰的页面加入B1
-                if len(self.B1) > self.size:
-                    self.B1.popitem(last=False)
+                self.T1.popitem(last=False)  # 表示弹出"最早的项"
+               
         else:
             grand_total = total + len(self.T2) + len(self.B2)
             if grand_total >= self.size:
