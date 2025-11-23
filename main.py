@@ -1,9 +1,10 @@
 """
 缓存性能分析主模块。
 
-本模块提供两种使用模式：
+本模块提供三种使用模式：
 1. 命令行数字参数模式：python main.py -1
 2. 交互式CLI菜单模式：python main.py
+3. 汇总模式：python main.py -all（运行所有负载并显示汇总表）
 
 所有模拟使用固定缓存大小（32页）和固定请求数（每个负载50000次请求）。
 """
@@ -16,7 +17,7 @@ from typing import Callable, Dict, List
 
 from capsa.caches import ARCCache, FIFOCache, LFUCache, LRUCache, OPTCache, TwoQCache
 from capsa.metrics import MetricsCollector, ReportConfig
-from capsa.simulator import Simulator
+from capsa.simulator import Simulator, SimulationResult
 from capsa.trace_suite import TRACE_BY_KEY, TRACE_RECIPES, generate_trace
 
 # 配置常量
@@ -84,30 +85,45 @@ def run_simulation(
     return collector.build_report(results)
 
 
-def run_workload(cache_size: int, recipe_key: str) -> None:
+def run_workload(cache_size: int, recipe_key: str, silent: bool = False) -> List[SimulationResult]:
     """
-    通过键运行单个负载并打印报告。
+    通过键运行单个负载并返回结果。
     
     Args:
         cache_size: 缓存大小（页数）
         recipe_key: 标识负载配方的键
+        silent: 如果为True，不打印详细报告
+        
+    Returns:
+        模拟结果列表
     """
     recipe = TRACE_BY_KEY[recipe_key]
     trace = generate_trace(recipe_key)
-    params = {
-        "recipe": recipe.key,
-        "category": recipe.category,
-        "steps": list(recipe.script),
-        "capacity_hint": list(recipe.capacity_hint),
-    }
-    report = run_simulation(
-        cache_size,
-        trace,
-        recipe.filename,
-        workload_name=recipe.category,
-        workload_params=params,
-    )
-    print(report)
+    factories = build_cache_factories(cache_size, trace)
+    simulator = Simulator(cache_size, trace)
+    results = []
+    
+    for algo_name in ALGORITHMS:
+        cache = factories[algo_name]()
+        results.append(simulator.run(algo_name, cache))
+    
+    if not silent:
+        params = {
+            "recipe": recipe.key,
+            "category": recipe.category,
+            "steps": list(recipe.script),
+            "capacity_hint": list(recipe.capacity_hint),
+        }
+        report_config = ReportConfig(
+            cache_size=cache_size,
+            workload_name=recipe.category,
+            workload_params=params,
+            total_requests=len(trace),
+        )
+        collector = MetricsCollector(report_config)
+        print(collector.build_report(results))
+    
+    return results
 
 
 def extract_better_indicator(goal: str) -> str:
@@ -220,11 +236,15 @@ def parse_workload_argument(arg: str) -> tuple[int | None, str | None]:
     解析负载参数（数字或键）。
     
     Args:
-        arg: 参数字符串（例如，"-1" 或 "WL01_HOT10_80_20"）
+        arg: 参数字符串（例如，"-1" 或 "WL01_HOT10_80_20" 或 "-all"）
         
     Returns:
-        (workload_index, workload_key)元组，其中一个是None
+        (workload_index, workload_key)元组，其中一个是None，如果是-all则返回(-1, None)
     """
+    # 检查是否为-all参数
+    if arg.lower() == "-all" or arg.lower() == "--all":
+        return -1, None
+    
     # 检查是否为数字参数（负数如-1）
     if arg.startswith("-") and arg[1:].isdigit():
         num = int(arg[1:])  # 移除减号
@@ -237,7 +257,53 @@ def parse_workload_argument(arg: str) -> tuple[int | None, str | None]:
     if arg in TRACE_BY_KEY:
         return None, arg
     
-    raise ValueError(f"Unknown workload '{arg}'. Use workload numbers (1-9) or workload keys like 'WL01_HOT10_80_20'")
+    raise ValueError(f"Unknown workload '{arg}'. Use workload numbers (1-9), workload keys, or -all to run all workloads")
+
+
+def run_all_workloads_summary() -> None:
+    """
+    运行所有负载并显示美观的命中率汇总表格。
+    """
+    print("\n" + "=" * 80)
+    print("CAPSA - 运行所有负载并生成命中率汇总表")
+    print("=" * 80)
+    print(f"\n缓存大小: {CACHE_SIZE} 页")
+    print(f"每个负载请求数: 50000\n")
+    print("正在运行所有负载，请稍候...\n")
+    
+    # 收集所有负载的结果
+    all_results: Dict[str, Dict[str, float]] = {}
+    
+    for idx, recipe in enumerate(TRACE_RECIPES, 1):
+        print(f"运行负载 {idx}/9: {recipe.key}...", end=" ", flush=True)
+        results = run_workload(CACHE_SIZE, recipe.key, silent=True)
+        
+        # 提取命中率
+        workload_results = {}
+        for result in results:
+            workload_results[result.algorithm] = result.hit_rate
+        all_results[f"WL{idx:02d}"] = workload_results
+        print("完成")
+    
+    # 生成美观的表格
+    print("\n" + "=" * 80)
+    print("命中率汇总表（%）")
+    print("=" * 80 + "\n")
+    
+    # 表头
+    header = f"{'负载':<8} " + " ".join(f"{algo:>8}" for algo in ALGORITHMS)
+    print(header)
+    print("-" * len(header))
+    
+    # 数据行
+    for workload_name in sorted(all_results.keys()):
+        row = f"{workload_name:<8} "
+        for algo in ALGORITHMS:
+            hit_rate = all_results[workload_name].get(algo, 0.0)
+            row += f"{hit_rate:>8.2f} "
+        print(row)
+    
+    print("\n" + "=" * 80)
 
 
 def parse_arguments(argv: list[str]) -> argparse.Namespace:
@@ -252,7 +318,7 @@ def parse_arguments(argv: list[str]) -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(
         description="CAPSA - Cache Algorithm Performance Simulator & Analyzer",
-        epilog="Examples:\n  python main.py -1          # Run workload 1\n  python main.py -1 -3 -5    # Run workloads 1, 3, 5\n  python main.py             # Interactive menu",
+        epilog="Examples:\n  python main.py -1          # Run workload 1\n  python main.py -1 -3 -5    # Run workloads 1, 3, 5\n  python main.py -all         # Run all workloads with summary table\n  python main.py             # Interactive menu",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -271,6 +337,11 @@ def main() -> None:
     1. 命令行模式：python main.py -1（运行负载1）
     2. 交互模式：python main.py（显示菜单）
     """
+    # 检查是否为-all参数（需要在parse_arguments之前处理）
+    if len(sys.argv) > 1 and (sys.argv[1].lower() == "-all" or sys.argv[1].lower() == "--all"):
+        run_all_workloads_summary()
+        return
+    
     args = parse_arguments(sys.argv[1:])
     
     # 解析负载参数

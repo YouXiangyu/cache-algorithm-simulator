@@ -43,6 +43,7 @@ class TwoQCache(Cache):
             return True
 
         if page_id in self.A1in:
+            # 第二次访问A1in中的页面，证明是热数据，移动到Am队列
             self.hits += 1
             return True
 
