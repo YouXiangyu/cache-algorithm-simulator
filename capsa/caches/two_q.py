@@ -20,7 +20,8 @@ class TwoQCache(Cache):
         self.size = size
         default_in = int(size * 0.5)
         self.size_in = max(1, min(size - 1, a1in_size if a1in_size is not None else default_in))
-        self.size_out = max(1, a1out_size if a1out_size is not None else int(size * 0.5))
+        default_out = 16
+        self.size_out = max(1, a1out_size if a1out_size is not None else default_out)
         self.size_am = max(1, size - self.size_in)
         self.A1in: "OrderedDict[int, None]" = OrderedDict()  # 仅访问过一次的页（FIFO）
         self.A1out: "OrderedDict[int, None]" = OrderedDict()  # 最近被淘汰的冷页面记录

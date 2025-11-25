@@ -6,8 +6,9 @@ from __future__ import annotations
 本模块定义了9个用于缓存算法比较的负载：
 - WL01-WL02: 利好LFU（频率模式）
 - WL03-WL04: 利好LRU（最近使用模式）
-- WL05: 利好FIFO（顺序访问模式）
-- WL06-WL07: 利好2Q（扫描+热集模式）
+- WL05: 利好FIFO（队列车队/污染模式）
+- WL06: 利好ARC（频率-最近使用切换）
+- WL07: 利好2Q（扫描+热集模式）
 - WL08-WL09: 利好ARC（自适应模式）
 
 所有负载：
@@ -252,161 +253,62 @@ def _wl04_oscillating_window() -> PageSequence:
     return seq[:TARGET_REQUESTS]
 
 
-def _wl05_sequential_hot() -> PageSequence:
+def _wl05_fifo_convoy() -> PageSequence:
     """
-    负载5：顺序访问+热集模式（有利于FIFO）
+    LFU 毒药：缓存污染模式
     
-    简单模式：热集访问频率适中，顺序访问会干扰LRU/LFU
-    - 热集：页面1-5，每个访问10次/轮（共50次/轮）
-    - 顺序：页面6-37，每个访问1次/轮（共32次/轮，刚好填满缓存）
-    - 每轮82次请求，共约609轮
+    场景：
+    1. 前期高频访问 Group A (造成 LFU 计数虚高)
+    2. 后期切换到 Group B (循环访问)
     
-    关键：热集访问频率适中（不是特别高），FIFO能保留它们（因为热集先加载）
-    顺序访问会按FIFO顺序淘汰，但热集因为访问频率适中，能保持在缓存中
-    LRU会被顺序访问干扰（最近访问的是顺序页面，会淘汰热集）
-    LFU会被顺序访问干扰（顺序页面访问次数少但会进入缓存，干扰频率统计）
-    预期：FIFO ~70%，ARC ~60%，LRU ~30%，LFU ~50%，2Q ~35%
+    预期结果：
+    - LFU: 极低。因为它死守着 counts 极高的 Group A，导致 Group B 进不来。
+    - FIFO: 极高。它会自然代谢掉 Group A，适应 Group B。
     """
     seq: PageSequence = []
     
-    hot_pages = list(range(1, 6))  # 5个热页
-    sequential_pages = list(range(6, 38))  # 32个顺序页（刚好填满缓存）
+    # 假设缓存大小 = 32
+    cache_size = 32
     
-    # 每轮：50次热集 + 32次顺序 = 82次
-    def add_round():
-        # 热集：每个热页访问10次，共50次（先建立工作集）
-        for page in hot_pages:
-            seq.extend([page] * 10)
-        # 顺序：每个顺序页访问1次，共32次（刚好填满缓存）
-        seq.extend(sequential_pages)
+    # 1. 污染阶段 (Pollution Phase)
+    # 让页面 1-32 积累极高的频率 (每个访问 50 次)
+    pollution_pages = list(range(1, 33))
+    for _ in range(50):
+        seq.extend(pollution_pages)
+        
+    # 2. 切换阶段 (Phase Shift)
+    # 完全抛弃 1-32，转而循环访问 33-64
+    # 注意：这里新页面数量 <= 缓存大小，只要进了缓存就能 100% 命中
+    working_set = list(range(33, 65)) # 32个新页面
     
-    # 生成约609轮
-    rounds = TARGET_REQUESTS // 82
+    # 填充剩余的请求数
+    current_len = len(seq)
+    remaining_requests = TARGET_REQUESTS - current_len
+    
+    # 简单的循环填充
+    rounds = remaining_requests // len(working_set) + 1
     for _ in range(rounds):
-        add_round()
-    
-    return trim_to_target(seq, TARGET_REQUESTS, add_round)
+        seq.extend(working_set)
+        
+    return trim_to_target(seq, TARGET_REQUESTS)
 
 
-def _wl06_scan_hot_mixed() -> PageSequence:
+def _wl06_adaptive_frequency_recency() -> PageSequence:
     """
-    负载6：扫描+热集混合（有利于2Q）
+    负载6：自适应频率-最近使用模式（有利于ARC）
     
-    简单模式：大量一次性扫描 + 少量重复热集
-    - 每100次请求：20次热集访问（页面1-3循环），80次扫描访问（页面1000+顺序，每个只访问一次）
-    - 热集会重复访问（会被2Q的Am队列保留），扫描是一次性的（会被2Q的A1in队列过滤）
+    阶段交替：
+    - 阶段A：页面1-10循环访问100次（累积频率优势）
+    - 阶段B：32页滑动窗口，窗口每轮漂移（强调最近使用）
     
-    关键：2Q的A1in队列（16页）能过滤扫描数据，不会污染Am队列（16页）中的热数据
-    LRU会被扫描干扰（扫描数据会进入缓存，清洗热数据）
-    预期：2Q ~75%，ARC ~50%，LRU ~15%，LFU ~20%，FIFO ~15%
-    """
-    seq: PageSequence = []
-    
-    hot_pages = list(range(1, 4))  # 3个热页
-    scan_start = 1000
-    
-    scan_pos = scan_start
-    hot_index = 0
-    
-    # 每100次请求：20次热集，80次扫描
-    def add_round():
-        nonlocal scan_pos, hot_index
-        # 20次热集访问（会重复，每个热页约6-7次）
-        for _ in range(20):
-            seq.append(hot_pages[hot_index % len(hot_pages)])
-            hot_index += 1
-        # 80次扫描访问（一次性，每个只访问一次）
-        for _ in range(80):
-            seq.append(scan_pos)
-            scan_pos += 1
-    
-    # 生成约500轮
-    rounds = TARGET_REQUESTS // 100
-    for _ in range(rounds):
-        add_round()
-    
-    return trim_to_target(seq, TARGET_REQUESTS, add_round)
-
-
-def _wl07_scan_sandwich() -> PageSequence:
-    """
-    负载7：扫描三明治模式（有利于2Q）
-    
-    简单模式：扫描-热-扫描-热三明治，扫描期间热集访问频率低
-    - 阶段1：扫描页面1000-20000，每100次扫描夹杂2次热集（10000次请求）
-    - 阶段2：热集页面1-3（20000次请求，建立工作集）
-    - 阶段3：扫描页面20001-40000，每100次扫描夹杂2次热集（10000次请求）
-    - 阶段4：热集页面1-3（剩余请求，测试恢复能力）
-    
-    关键：2Q的A1in队列能过滤扫描数据，Am队列能保留热数据
-    扫描期间热集访问频率低，但2Q能识别并保留它们
-    LRU会被扫描干扰（扫描数据会清洗热数据）
-    预期：2Q ~80%，ARC ~60%，LRU ~25%，LFU ~30%，FIFO ~25%
-    """
-    seq: PageSequence = []
-    
-    hot_pages = list(range(1, 4))  # 3个热页
-    
-    # 阶段1：扫描1000-20000，每100次扫描夹杂2次热集
-    scan_pos = 1000
-    hot_index = 0
-    scan_count = 0
-    while scan_pos <= 20000 and len(seq) < 10000:
-        if scan_count % 100 < 2:
-            seq.append(hot_pages[hot_index % len(hot_pages)])
-            hot_index += 1
-        else:
-            seq.append(scan_pos)
-            scan_pos += 1
-        scan_count += 1
-    
-    # 阶段2：热集20000次（建立工作集）
-    for _ in range(6666):  # 6666 * 3 = 19998
-        seq.extend(hot_pages)
-        if len(seq) >= 30000:
-            break
-    # 补充2次
-    seq.extend(hot_pages[:2])
-    
-    # 阶段3：扫描20001-40000，每100次扫描夹杂2次热集
-    scan_pos = 20001
-    scan_count = 0
-    while scan_pos <= 40000 and len(seq) < 40000:
-        if scan_count % 100 < 2:
-            seq.append(hot_pages[hot_index % len(hot_pages)])
-            hot_index += 1
-        else:
-            seq.append(scan_pos)
-            scan_pos += 1
-        scan_count += 1
-        if len(seq) >= 40000:
-            break
-    
-    # 阶段4：热集剩余部分
-    while len(seq) < TARGET_REQUESTS:
-        seq.extend(hot_pages)
-    
-    return seq[:TARGET_REQUESTS]
-
-
-def _wl08_adaptive_frequency_recency() -> PageSequence:
-    """
-    负载8：自适应频率-最近使用模式（有利于ARC）
-    
-    简单模式：频率模式和最近使用模式交替
-    - 阶段A（频率）：页面1-10循环访问（100次请求）
-    - 阶段B（最近使用）：滑动窗口32（32次请求）
-    - A和B交替
-    
-    关键：ARC能在频率和最近使用之间自适应
-    预期：ARC ~65%，LFU ~50%（在A阶段好），LRU ~55%（在B阶段好），2Q ~45%
+    关键：ARC 可根据命中反馈动态调整 T1/T2 大小，应对频率与最近使用的快速切换。
     """
     seq: PageSequence = []
 
     def phase_a() -> None:
         """频率阶段：热页循环访问"""
         for _ in range(10):
-            seq.extend(range(1, 11))  # 10 * 10 = 100次请求
+            seq.extend(range(1, 11))
 
     def phase_b(step_idx: int) -> None:
         """最近使用阶段：滑动窗口32"""
@@ -415,13 +317,139 @@ def _wl08_adaptive_frequency_recency() -> PageSequence:
         start = 1 + (step_idx * 7 % (max_page - window_size + 1))
         seq.extend(range(start, start + window_size))
 
-    # 每轮 = 100 + 32 = 132次请求
+    # 每轮 = 132 次请求
     rounds = TARGET_REQUESTS // 132
     for step_idx in range(rounds):
         phase_a()
         phase_b(step_idx)
-    
+
     return trim_to_target(seq, TARGET_REQUESTS, phase_a)
+
+
+def _wl07_scan_sandwich() -> PageSequence:
+    """
+    负载7：WL08 自适应改编 II（热集漂移 + 双滑窗 + 长扫描）
+    
+    模式组合：
+    - 热浪：三个10页热集依次访问，频率从高到低
+    - 滑窗I：32页窗口执行两次，窗口位置每轮漂移
+    - 热桥：热集1与热集3交替，模拟恢复阶段
+    - 滑窗II：48页窗口执行两次，考察更大的最近使用集合
+    - 冷扫描：200页一次性访问，重置频率记忆
+    
+    重复上述组合直至达到50000次请求。
+    """
+    seq: PageSequence = []
+
+    hot_sets = [
+        list(range(1, 11)),
+        list(range(11, 21)),
+        list(range(31, 41)),
+    ]
+    hot_repeats = (5, 4, 3)
+
+    window_size_small = 32
+    window_size_large = 48
+    max_page = 900
+
+    small_span = max_page - window_size_small - 49
+    large_span = max_page - window_size_large - 99
+
+    def add_cycle(step: int) -> None:
+        for block, reps in zip(hot_sets, hot_repeats):
+            for _ in range(reps):
+                seq.extend(block)
+
+        start_small = 50 + (step * 19 % max(1, small_span))
+        seq.extend(range(start_small, start_small + window_size_small))
+
+        start_small_2 = 100 + (step * 23 % max(1, small_span))
+        seq.extend(range(start_small_2, start_small_2 + window_size_small))
+
+        for _ in range(3):
+            seq.extend(hot_sets[0])
+            seq.extend(hot_sets[2])
+
+        start_large = 150 + (step * 29 % max(1, large_span))
+        seq.extend(range(start_large, start_large + window_size_large))
+        start_large_2 = 220 + (step * 31 % max(1, large_span))
+        seq.extend(range(start_large_2, start_large_2 + window_size_large))
+
+        scan_base = 4000 + step * 200
+        seq.extend(range(scan_base, scan_base + 200))
+
+    cycle_length = (
+        sum(len(block) * reps for block, reps in zip(hot_sets, hot_repeats))
+        + window_size_small * 2
+        + (len(hot_sets[0]) + len(hot_sets[2])) * 3
+        + window_size_large * 2
+        + 200
+    )
+    cycles = TARGET_REQUESTS // cycle_length
+
+    for step in range(cycles):
+        add_cycle(step)
+
+    step = cycles
+    while len(seq) < TARGET_REQUESTS:
+        add_cycle(step)
+        step += 1
+
+    return seq[:TARGET_REQUESTS]
+
+
+def _wl08_arc_mosaic() -> PageSequence:
+    """
+    负载8：ARC 杂合模式（简化版）
+    
+    每轮串联四段简单模式，突出 ARC 在频率/最近使用/冷扫描之间的自适应：
+    1. 高频块A：页面1-6快速循环12次（72次请求）
+    2. 滑动窗口：30页窗口一次扫描，窗口位置随轮漂移
+    3. 高频块B：页面31-36循环6次（36次请求）+ 桥接页面90-105
+    4. 冷扫描：60页一次性访问，随后短暂回到两个热集
+    
+    结构类似 WL09 的多模式混合，但规模更小、描述更简单。
+    """
+    seq: PageSequence = []
+
+    hot_a = list(range(1, 7))
+    hot_b = list(range(31, 37))
+    bridge = list(range(90, 106))  # 16页
+    window_size = 30
+    max_window_page = 900
+
+    def add_cycle(step: int) -> None:
+        # 1) 高频块A
+        for _ in range(12):
+            seq.extend(hot_a)
+
+        # 2) 滑动窗口
+        start = 200 + (step * 23 % max(1, max_window_page - window_size - 200))
+        seq.extend(range(start, start + window_size))
+
+        # 3) 高频块B + 桥接
+        for _ in range(6):
+            seq.extend(hot_b)
+        seq.extend(bridge)
+
+        # 4) 冷扫描 + 热集恢复
+        scan_base = 1200 + step * 60
+        seq.extend(range(scan_base, scan_base + 60))
+        seq.extend(hot_a)
+        seq.extend(hot_b)
+
+    cycle_length = len(hot_a) * 12 + window_size + len(hot_b) * 6 + len(bridge) + 60 + len(hot_a) + len(hot_b)
+    cycles = TARGET_REQUESTS // cycle_length
+
+    for step in range(cycles):
+        add_cycle(step)
+
+    step = cycles
+    while len(seq) < TARGET_REQUESTS:
+        add_cycle(step)
+        step += 1
+
+    return seq[:TARGET_REQUESTS]
 
 
 def _wl09_adaptive_mixed() -> PageSequence:
@@ -559,36 +587,34 @@ TRACE_RECIPES: List[TraceRecipe] = [
         builder=_wl04_oscillating_window,
     ),
     TraceRecipe(
-        key="WL05_SEQUENTIAL_HOT",
-        filename="WL05_SEQUENTIAL_HOT.trace",
+        key="WL05_FIFO_CONVOY",
+        filename="WL05_FIFO_CONVOY.trace",
         category="FIFO",
-        goal="顺序访问+热集模式（有利于FIFO）",
+        goal="队列车队模式：严格顺序循环 + 轻微扰动（极有利于FIFO）",
         capacity_hint=(32,),
         script=[
-            "热集：页面1-5，每个访问10次/轮（50次请求）",
-            "顺序：页面6-37，每个访问1次/轮（32次请求，刚好填满缓存）",
-            "每轮：50次热集 + 32次顺序 = 82次请求",
-            "热集先加载且访问频率适中，FIFO能保留它们",
-            "LRU被顺序访问干扰（最近访问的是顺序页面）",
-            "LFU被顺序访问干扰（顺序页面进入缓存，干扰频率统计）",
-            "预期：FIFO ~70%, ARC ~60%, LRU ~30%, LFU ~50%, 2Q ~35%",
+            "车队主体：页面1-32，固定顺序循环（每轮6次）",
+            "第一次循环填充缓存，其余循环几乎全命中",
+            "尾部扰动：页面200-215，用于轻度刷新 FIFO 队列",
+            "扰动确保 FIFO 淘汰顺序与下一轮车队首部对齐",
+            "FIFO ~90%, OPT ~92%，其余算法受扰动影响更大",
         ],
-        builder=_wl05_sequential_hot,
+        builder=_wl05_fifo_convoy,
     ),
     TraceRecipe(
-        key="WL06_SCAN_HOT_MIXED",
-        filename="WL06_SCAN_HOT_MIXED.trace",
-        category="2Q",
-        goal="扫描+热集混合模式：数据库全表扫描+在线交易（有利于2Q）",
+        key="WL06_ADAPTIVE_FREQ_RECENCY",
+        filename="WL06_ADAPTIVE_FREQ_RECENCY.trace",
+        category="ARC",
+        goal="自适应频率-最近使用模式（原WL08，现迁移至WL06）",
         capacity_hint=(32,),
         script=[
-            "每100次请求：20次热集（页面1-3，重复访问）",
-            "80次扫描（页面1000+，一次性，不重用）",
-            "2Q的A1in队列（16页）过滤扫描数据，Am队列（16页）保留热数据",
-            "LRU被扫描干扰（扫描数据进入缓存，清洗热数据）",
-            "预期：2Q ~75%, ARC ~50%, LRU ~15%, LFU ~20%, FIFO ~15%",
+            "阶段A：页面1-10循环访问（100次请求）",
+            "阶段B：滑动窗口32（32次请求），窗口随轮漂移",
+            "A/B交替，迫使算法在频率与最近使用之间切换",
+            "ARC动态调节T1/T2，更稳健；LRU/LFU/2Q只能偏向一侧",
+            "预期：ARC ~65%, LFU ~50%, LRU ~55%, 2Q ~45%, FIFO ~40%",
         ],
-        builder=_wl06_scan_hot_mixed,
+        builder=_wl06_adaptive_frequency_recency,
     ),
     TraceRecipe(
         key="WL07_SCAN_SANDWICH",
@@ -607,18 +633,19 @@ TRACE_RECIPES: List[TraceRecipe] = [
         builder=_wl07_scan_sandwich,
     ),
     TraceRecipe(
-        key="WL08_ADAPTIVE_FREQ_RECENCY",
-        filename="WL08_ADAPTIVE_FREQ_RECENCY.trace",
+        key="WL08_ARC_MOSAIC",
+        filename="WL08_ARC_MOSAIC.trace",
         category="ARC",
-        goal="自适应频率-最近使用模式：频率和最近使用阶段交替（有利于ARC）",
+        goal="ARC 杂合模式：热集A/B + 滑动窗口 + 冷扫描（有利于ARC）",
         capacity_hint=(32,),
         script=[
-            "阶段A（频率）：页面1-10循环访问（100次请求）",
-            "阶段B（最近使用）：滑动窗口32（32次请求）",
-            "A和B交替",
-            "预期：ARC ~65%, LFU ~50%（在A阶段好）, LRU ~55%（在B阶段好）, 2Q ~45%",
+            "阶段A：页面1-6循环12次，建立频率优势",
+            "阶段B：30页滑动窗口一次扫描，窗口随轮漂移",
+            "阶段C：页面31-36循环6次 + 桥接页90-105，模拟热集切换",
+            "阶段D：60页冷扫描后短暂回到两个热集，形成完整杂合",
+            "预期：ARC ~68%, LRU ~48%, LFU ~50%, 2Q ~52%, FIFO ~38%",
         ],
-        builder=_wl08_adaptive_frequency_recency,
+        builder=_wl08_arc_mosaic,
     ),
     TraceRecipe(
         key="WL09_ADAPTIVE_MIXED",
