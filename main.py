@@ -22,7 +22,7 @@ from capsa.trace_suite import TRACE_BY_KEY, TRACE_RECIPES, generate_trace
 
 # 配置常量
 CACHE_SIZE = 32
-ALGORITHMS = ["LRU", "LFU", "FIFO", "ARC", "2Q", "OPT"]
+ALGORITHMS = ["LFU", "LRU", "FIFO", "2Q", "ARC", "OPT"]
 NON_OPT_ALGOS = [algo for algo in ALGORITHMS if algo != "OPT"]
 WORKLOAD_COL_WIDTH = 10
 VALUE_COL_WIDTH = 12
@@ -30,7 +30,7 @@ ANSI_RESET = "\033[0m"
 ANSI_BOLD = "\033[1m"
 ANSI_GREEN = "\033[32m"
 SUPPORTS_ANSI = sys.stdout.isatty()
-TWO_Q_A1OUT_FIXED = 16
+TWO_Q_A1OUT_FIXED = 32
 TWO_Q_A1IN_MAX = 16
 
 
@@ -90,45 +90,6 @@ def build_cache_factories(
     }
 
 
-def run_simulation(
-    cache_size: int,
-    trace: List[int],
-    source_name: str,
-    *,
-    workload_name: str | None = None,
-    workload_params: Dict[str, object] | None = None,
-) -> str:
-    """
-    在跟踪序列上运行模拟并生成性能报告。
-    
-    Args:
-        cache_size: 缓存大小（页数）
-        trace: 页面访问序列
-        source_name: 跟踪源名称（例如文件名）
-        workload_name: 可选的负载类别名称
-        workload_params: 可选的负载参数字典
-        
-    Returns:
-        格式化的性能报告字符串
-    """
-    factories = build_cache_factories(cache_size, trace)
-    simulator = Simulator(cache_size, trace)
-    results = []
-    
-    for algo_name in ALGORITHMS:
-        cache = factories[algo_name]()
-        results.append(simulator.run(algo_name, cache))
-    
-    report_config = ReportConfig(
-        cache_size=cache_size,
-        workload_name=workload_name or "File",
-        workload_params=workload_params or {"source": source_name},
-        total_requests=len(trace),
-    )
-    collector = MetricsCollector(report_config)
-    return collector.build_report(results)
-
-
 def run_workload(cache_size: int, recipe_key: str, silent: bool = False) -> List[SimulationResult]:
     """
     通过键运行单个负载并返回结果。
@@ -170,7 +131,7 @@ def run_workload(cache_size: int, recipe_key: str, silent: bool = False) -> List
         )
         collector = MetricsCollector(report_config)
         print(collector.build_report(results))
-        print(f"[2Q离线调优] A1in={best_a1in}, A1out={TWO_Q_A1OUT_FIXED}, HitRate={best_two_q_hit:.2f}%")
+        print(f"[2Q offline tuning] A1in={best_a1in}, A1out={TWO_Q_A1OUT_FIXED}, HitRate={best_two_q_hit:.2f}%")
     
     return results
 
@@ -314,17 +275,17 @@ def run_all_workloads_summary() -> None:
     运行所有负载并显示美观的命中率汇总表格。
     """
     print("\n" + "=" * 80)
-    print("CAPSA - 运行所有负载并生成命中率汇总表")
+    print("CAPSA - Running all workloads with summary table")
     print("=" * 80)
-    print(f"\n缓存大小: {CACHE_SIZE} 页")
-    print(f"每个负载请求数: 50000\n")
-    print("正在运行所有负载，请稍候...\n")
+    print(f"\nCache size: {CACHE_SIZE} pages")
+    print(f"Requests per workload: 50000\n")
+    print("Running all workloads, please wait...\n")
     
     # 收集所有负载的结果
     all_results: Dict[str, Dict[str, float]] = {}
     
     for idx, recipe in enumerate(TRACE_RECIPES, 1):
-        print(f"运行负载 {idx}/9: {recipe.key}...", end=" ", flush=True)
+        print(f"Running workload {idx}/9: {recipe.key}...", end=" ", flush=True)
         results = run_workload(CACHE_SIZE, recipe.key, silent=True)
         
         # 提取命中率
@@ -332,15 +293,15 @@ def run_all_workloads_summary() -> None:
         for result in results:
             workload_results[result.algorithm] = result.hit_rate
         all_results[f"WL{idx:02d}"] = workload_results
-        print("完成")
+        print("Done")
     
     # 生成美观的表格
     print("\n" + "=" * 80)
-    print("命中率汇总表（%）")
+    print("Hit rate summary (%)")
     print("=" * 80 + "\n")
     
     # 表头与分隔线
-    header_cells = [f"{'负载':<{WORKLOAD_COL_WIDTH}}"]
+    header_cells = [f"{'Workload':<{WORKLOAD_COL_WIDTH}}"]
     header_cells.extend(f"{algo:>{VALUE_COL_WIDTH}}" for algo in ALGORITHMS)
     header = " ".join(header_cells)
     table_width = len(header.replace(ANSI_BOLD, "").replace(ANSI_GREEN, "").replace(ANSI_RESET, ""))

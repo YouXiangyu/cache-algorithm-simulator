@@ -43,25 +43,6 @@ class TraceRecipe:
     builder: TraceBuilder
 
 
-def repeat_function(times: int, fn: Callable[[], None]) -> None:
-    """
-    多次调用一个函数。
-    
-    这是负载生成模式的辅助函数，用于连续多次执行同一个函数。
-    
-    Args:
-        times: 调用函数的次数
-        fn: 要调用的函数（应修改外部状态，例如追加到列表）
-    
-    Example:
-        >>> seq = []
-        >>> def add_hot(): seq.extend(range(1, 11))
-        >>> repeat_function(8, add_hot)  # 调用add_hot 8次
-    """
-    for _ in range(times):
-        fn()
-
-
 def trim_to_target(seq: PageSequence, target: int, extend_fn: Callable[[], None] | None = None) -> PageSequence:
     """
     调整序列长度以精确匹配目标值。
@@ -668,17 +649,9 @@ TRACE_RECIPES: List[TraceRecipe] = [
 TRACE_BY_KEY: Dict[str, TraceRecipe] = {t.key: t for t in TRACE_RECIPES}
 
 
-def list_trace_keys() -> List[str]:
-    return [t.key for t in TRACE_RECIPES]
-
-
 def generate_trace(key: str) -> List[int]:
     recipe = TRACE_BY_KEY[key]
     return recipe.builder()
-
-
-def iter_recipes() -> Iterable[TraceRecipe]:
-    return list(TRACE_RECIPES)
 
 
 __all__ = [
@@ -686,7 +659,5 @@ __all__ = [
     "TRACE_RECIPES",
     "TRACE_BY_KEY",
     "generate_trace",
-    "list_trace_keys",
-    "iter_recipes",
 ]
 
