@@ -22,10 +22,54 @@ from capsa.trace_suite import TRACE_BY_KEY, TRACE_RECIPES, generate_trace
 
 # 配置常量
 CACHE_SIZE = 32
-ALGORITHMS = ["LRU", "LFU", "FIFO", "ARC", "OPT", "2Q"]
+ALGORITHMS = ["LRU", "LFU", "FIFO", "ARC", "2Q", "OPT"]
+NON_OPT_ALGOS = [algo for algo in ALGORITHMS if algo != "OPT"]
+WORKLOAD_COL_WIDTH = 10
+VALUE_COL_WIDTH = 12
+ANSI_RESET = "\033[0m"
+ANSI_BOLD = "\033[1m"
+ANSI_GREEN = "\033[32m"
+SUPPORTS_ANSI = sys.stdout.isatty()
+TWO_Q_A1OUT_FIXED = 16
+TWO_Q_A1IN_MAX = 16
 
 
-def build_cache_factories(cache_size: int, trace: List[int]) -> Dict[str, Callable[[], object]]:
+def tune_two_q_offline(cache_size: int, trace: List[int]) -> tuple[int, float]:
+    """
+    针对给定负载离线搜索 2Q 的最佳 A1in 大小，A1out 固定为 16。
+    返回 (best_a1in, best_hit_rate)。
+    """
+    simulator = Simulator(cache_size, trace)
+    search_upper = min(TWO_Q_A1IN_MAX, cache_size - 1)
+    best_a1in = 1
+    best_hit_rate = -1.0
+    
+    for a1in in range(1, search_upper + 1):
+        cache = TwoQCache(cache_size, a1in_size=a1in, a1out_size=TWO_Q_A1OUT_FIXED)
+        result = simulator.run("2Q", cache)
+        if result.hit_rate > best_hit_rate:
+            best_hit_rate = result.hit_rate
+            best_a1in = a1in
+    
+    return best_a1in, best_hit_rate
+
+
+def emphasize_best_cell(text: str) -> str:
+    """
+    使用 ANSI 颜色与下划线高亮最佳命中率。
+    在 stdout 不支持 ANSI 时，直接返回原文本以保持对齐。
+    """
+    if not SUPPORTS_ANSI:
+        return text
+    return f"{ANSI_BOLD}{ANSI_GREEN}{text}{ANSI_RESET}"
+
+
+def build_cache_factories(
+    cache_size: int,
+    trace: List[int],
+    *,
+    two_q_params: Dict[str, object] | None = None,
+) -> Dict[str, Callable[[], object]]:
     """
     为所有缓存算法构建工厂函数。
     
@@ -42,7 +86,7 @@ def build_cache_factories(cache_size: int, trace: List[int]) -> Dict[str, Callab
         "FIFO": lambda: FIFOCache(cache_size),
         "ARC": lambda: ARCCache(cache_size),
         "OPT": lambda: OPTCache(cache_size, trace),
-        "2Q": lambda: TwoQCache(cache_size),
+        "2Q": lambda: TwoQCache(cache_size, **(two_q_params or {})),
     }
 
 
@@ -99,7 +143,9 @@ def run_workload(cache_size: int, recipe_key: str, silent: bool = False) -> List
     """
     recipe = TRACE_BY_KEY[recipe_key]
     trace = generate_trace(recipe_key)
-    factories = build_cache_factories(cache_size, trace)
+    best_a1in, best_two_q_hit = tune_two_q_offline(cache_size, trace)
+    two_q_params = {"a1in_size": best_a1in, "a1out_size": TWO_Q_A1OUT_FIXED}
+    factories = build_cache_factories(cache_size, trace, two_q_params=two_q_params)
     simulator = Simulator(cache_size, trace)
     results = []
     
@@ -113,6 +159,8 @@ def run_workload(cache_size: int, recipe_key: str, silent: bool = False) -> List
             "category": recipe.category,
             "steps": list(recipe.script),
             "capacity_hint": list(recipe.capacity_hint),
+            "two_q_best_a1in": best_a1in,
+            "two_q_best_hit_rate": round(best_two_q_hit, 2),
         }
         report_config = ReportConfig(
             cache_size=cache_size,
@@ -122,6 +170,7 @@ def run_workload(cache_size: int, recipe_key: str, silent: bool = False) -> List
         )
         collector = MetricsCollector(report_config)
         print(collector.build_report(results))
+        print(f"[2Q离线调优] A1in={best_a1in}, A1out={TWO_Q_A1OUT_FIXED}, HitRate={best_two_q_hit:.2f}%")
     
     return results
 
@@ -290,18 +339,30 @@ def run_all_workloads_summary() -> None:
     print("命中率汇总表（%）")
     print("=" * 80 + "\n")
     
-    # 表头
-    header = f"{'负载':<8} " + " ".join(f"{algo:>8}" for algo in ALGORITHMS)
+    # 表头与分隔线
+    header_cells = [f"{'负载':<{WORKLOAD_COL_WIDTH}}"]
+    header_cells.extend(f"{algo:>{VALUE_COL_WIDTH}}" for algo in ALGORITHMS)
+    header = " ".join(header_cells)
+    table_width = len(header.replace(ANSI_BOLD, "").replace(ANSI_GREEN, "").replace(ANSI_RESET, ""))
     print(header)
-    print("-" * len(header))
+    print("-" * table_width)
     
-    # 数据行
+    # 数据行并突出每个负载的最佳命中率
     for workload_name in sorted(all_results.keys()):
-        row = f"{workload_name:<8} "
+        workload_results = all_results[workload_name]
+        best_hit_rate = (
+            max((workload_results.get(algo, 0.0) for algo in NON_OPT_ALGOS), default=0.0)
+            if workload_results
+            else 0.0
+        )
+        row_cells = [f"{workload_name:<{WORKLOAD_COL_WIDTH}}"]
         for algo in ALGORITHMS:
-            hit_rate = all_results[workload_name].get(algo, 0.0)
-            row += f"{hit_rate:>8.2f} "
-        print(row)
+            hit_rate = workload_results.get(algo, 0.0)
+            cell = f"{hit_rate:>{VALUE_COL_WIDTH}.2f}"
+            if algo != "OPT" and abs(hit_rate - best_hit_rate) < 1e-9:
+                cell = emphasize_best_cell(cell)
+            row_cells.append(cell)
+        print(" ".join(row_cells))
     
     print("\n" + "=" * 80)
 

@@ -9,11 +9,18 @@ from ..cache_base import Cache
 class TwoQCache(Cache):
     """2Q 双队列缓存策略，利用 FIFO 热身队列与 LRU 主队列结合降低缓存污染。"""
 
-    def __init__(self, size: int):
+    def __init__(
+        self,
+        size: int,
+        *,
+        a1in_size: int | None = None,
+        a1out_size: int | None = None,
+    ):
         super().__init__(size)
         self.size = size
-        self.size_in = max(1, int(size * 0.5))
-        self.size_out = max(1, int(size * 0.5))
+        default_in = int(size * 0.5)
+        self.size_in = max(1, min(size - 1, a1in_size if a1in_size is not None else default_in))
+        self.size_out = max(1, a1out_size if a1out_size is not None else int(size * 0.5))
         self.size_am = max(1, size - self.size_in)
         self.A1in: "OrderedDict[int, None]" = OrderedDict()  # 仅访问过一次的页（FIFO）
         self.A1out: "OrderedDict[int, None]" = OrderedDict()  # 最近被淘汰的冷页面记录
