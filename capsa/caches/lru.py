@@ -7,7 +7,6 @@ from ..cache_base import Cache
 
 
 class LRUCache(Cache):
-    """经典 LRU 缓存，基于 OrderedDict 实现 O(1) 操作。"""
 
     def __init__(self, size: int):
         super().__init__(size)

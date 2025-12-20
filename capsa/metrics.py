@@ -15,7 +15,7 @@ class ReportConfig:
 
 
 class MetricsCollector:
-    """将原始指标转换为人类可读的报告。"""
+    """generate report for simulation results"""
 
     def __init__(self, config: ReportConfig):
         self.config = config

@@ -1,13 +1,3 @@
-"""
-缓存性能分析主模块。
-
-本模块提供三种使用模式：
-1. 命令行数字参数模式：python main.py -1
-2. 交互式CLI菜单模式：python main.py
-3. 汇总模式：python main.py -all（运行所有负载并显示汇总表）
-
-所有模拟使用固定缓存大小（32页）和固定请求数（每个负载50000次请求）。
-"""
 
 from __future__ import annotations
 
@@ -20,7 +10,7 @@ from capsa.metrics import MetricsCollector, ReportConfig
 from capsa.simulator import Simulator, SimulationResult
 from capsa.trace_suite import TRACE_BY_KEY, TRACE_RECIPES, generate_trace
 
-# 配置常量
+# constant setup
 CACHE_SIZE = 32
 ALGORITHMS = ["LFU", "LRU", "FIFO", "2Q", "ARC", "OPT"]
 NON_OPT_ALGOS = [algo for algo in ALGORITHMS if algo != "OPT"]
@@ -35,10 +25,6 @@ TWO_Q_A1IN_MAX = 16
 
 
 def tune_two_q_offline(cache_size: int, trace: List[int]) -> tuple[int, float]:
-    """
-    针对给定负载离线搜索 2Q 的最佳 A1in 大小，A1out 固定为 16。
-    返回 (best_a1in, best_hit_rate)。
-    """
     simulator = Simulator(cache_size, trace)
     search_upper = min(TWO_Q_A1IN_MAX, cache_size - 1)
     best_a1in = 1
@@ -56,8 +42,7 @@ def tune_two_q_offline(cache_size: int, trace: List[int]) -> tuple[int, float]:
 
 def emphasize_best_cell(text: str) -> str:
     """
-    使用 ANSI 颜色与下划线高亮最佳命中率。
-    在 stdout 不支持 ANSI 时，直接返回原文本以保持对齐。
+    highlight the best cell in the table
     """
     if not SUPPORTS_ANSI:
         return text
@@ -71,14 +56,7 @@ def build_cache_factories(
     two_q_params: Dict[str, object] | None = None,
 ) -> Dict[str, Callable[[], object]]:
     """
-    为所有缓存算法构建工厂函数。
-    
-    Args:
-        cache_size: 缓存大小（页数）
-        trace: 完整的跟踪序列（OPT算法需要）
-        
-    Returns:
-        算法名称到工厂函数的字典映射
+    build cache instance for all algorithms
     """
     return {
         "LRU": lambda: LRUCache(cache_size),
@@ -92,15 +70,7 @@ def build_cache_factories(
 
 def run_workload(cache_size: int, recipe_key: str, silent: bool = False) -> List[SimulationResult]:
     """
-    通过键运行单个负载并返回结果。
-    
-    Args:
-        cache_size: 缓存大小（页数）
-        recipe_key: 标识负载配方的键
-        silent: 如果为True，不打印详细报告
-        
-    Returns:
-        模拟结果列表
+    run a single workload and return results
     """
     recipe = TRACE_BY_KEY[recipe_key]
     trace = generate_trace(recipe_key)
@@ -137,14 +107,9 @@ def run_workload(cache_size: int, recipe_key: str, silent: bool = False) -> List
 
 
 def extract_better_indicator(goal: str) -> str:
-    """
-    从负载目标字符串中提取"更好"的指示符。
-    
-    Args:
-        goal: 可能包含指示符（如"(LFU better)"）的目标字符串
-        
+    """   
     Returns:
-        如果找到则返回指示符字符串，否则返回空字符串
+        if goal contains any better indicator, return the indicator, otherwise return empty string
     """
     indicators = ["(LFU better)", "(LRU better)", "(2Q better)", "(ARC adaptive)"]
     for indicator in indicators:
@@ -154,16 +119,6 @@ def extract_better_indicator(goal: str) -> str:
 
 
 def format_workload_description(recipe) -> tuple[str, str]:
-    """
-    格式化负载描述以便在菜单中显示。
-    
-    Args:
-        recipe: TraceRecipe对象
-        
-    Returns:
-        (indicator, clean_goal)元组，其中indicator是"更好"的指示符，
-        clean_goal是不包含指示符的目标
-    """
     indicator = extract_better_indicator(recipe.goal)
     clean_goal = recipe.goal
     for ind in ["(LFU better)", "(LRU better)", "(2Q better)", "(ARC adaptive)"]:
@@ -173,7 +128,6 @@ def format_workload_description(recipe) -> tuple[str, str]:
 
 
 def display_workload_menu() -> None:
-    """显示交互式负载选择菜单。"""
     print("\n" + "=" * 60)
     print("Cache Performance Analysis - Workload Selection")
     print("=" * 60)
@@ -193,16 +147,6 @@ def display_workload_menu() -> None:
 
 
 def parse_user_selection(user_input: str, num_workloads: int) -> List[int]:
-    """
-    解析用户输入的负载选择。
-    
-    Args:
-        user_input: 原始用户输入字符串
-        num_workloads: 可用负载总数
-        
-    Returns:
-        选中的负载索引列表（从1开始）
-    """
     if not user_input.strip():
         return list(range(1, num_workloads + 1))
     
@@ -225,12 +169,6 @@ def parse_user_selection(user_input: str, num_workloads: int) -> List[int]:
 
 
 def show_interactive_menu() -> List[int]:
-    """
-    显示交互式CLI菜单并返回选中的负载索引。
-    
-    Returns:
-        选中的负载索引列表（从1开始），如果取消则返回空列表
-    """
     display_workload_menu()
     
     try:
@@ -242,28 +180,19 @@ def show_interactive_menu() -> List[int]:
 
 
 def parse_workload_argument(arg: str) -> tuple[int | None, str | None]:
-    """
-    解析负载参数（数字或键）。
-    
-    Args:
-        arg: 参数字符串（例如，"-1" 或 "WL01_HOT10_80_20" 或 "-all"）
-        
-    Returns:
-        (workload_index, workload_key)元组，其中一个是None，如果是-all则返回(-1, None)
-    """
-    # 检查是否为-all参数
+    # check if arg is -all or --all
     if arg.lower() == "-all" or arg.lower() == "--all":
         return -1, None
     
-    # 检查是否为数字参数（负数如-1）
+    # check if arg is a number (negative or positive)
     if arg.startswith("-") and arg[1:].isdigit():
-        num = int(arg[1:])  # 移除减号
+        num = int(arg[1:])  # remove minus sign
         if 1 <= num <= len(TRACE_RECIPES):
             return num, None
         else:
             raise ValueError(f"Workload number {num} is out of range (1-{len(TRACE_RECIPES)})")
     
-    # 检查是否为负载键
+    # check if arg is a workload key
     if arg in TRACE_BY_KEY:
         return None, arg
     
@@ -271,9 +200,6 @@ def parse_workload_argument(arg: str) -> tuple[int | None, str | None]:
 
 
 def run_all_workloads_summary() -> None:
-    """
-    运行所有负载并显示美观的命中率汇总表格。
-    """
     print("\n" + "=" * 80)
     print("CAPSA - Running all workloads with summary table")
     print("=" * 80)
@@ -281,26 +207,23 @@ def run_all_workloads_summary() -> None:
     print(f"Requests per workload: 50000\n")
     print("Running all workloads, please wait...\n")
     
-    # 收集所有负载的结果
     all_results: Dict[str, Dict[str, float]] = {}
     
     for idx, recipe in enumerate(TRACE_RECIPES, 1):
         print(f"Running workload {idx}/9: {recipe.key}...", end=" ", flush=True)
         results = run_workload(CACHE_SIZE, recipe.key, silent=True)
-        
-        # 提取命中率
+
         workload_results = {}
         for result in results:
             workload_results[result.algorithm] = result.hit_rate
         all_results[f"WL{idx:02d}"] = workload_results
         print("Done")
     
-    # 生成美观的表格
+
     print("\n" + "=" * 80)
     print("Hit rate summary (%)")
     print("=" * 80 + "\n")
-    
-    # 表头与分隔线
+
     header_cells = [f"{'Workload':<{WORKLOAD_COL_WIDTH}}"]
     header_cells.extend(f"{algo:>{VALUE_COL_WIDTH}}" for algo in ALGORITHMS)
     header = " ".join(header_cells)
@@ -308,7 +231,7 @@ def run_all_workloads_summary() -> None:
     print(header)
     print("-" * table_width)
     
-    # 数据行并突出每个负载的最佳命中率
+    # display
     for workload_name in sorted(all_results.keys()):
         workload_results = all_results[workload_name]
         best_hit_rate = (
@@ -329,15 +252,6 @@ def run_all_workloads_summary() -> None:
 
 
 def parse_arguments(argv: list[str]) -> argparse.Namespace:
-    """
-    解析命令行参数。
-    
-    Args:
-        argv: 命令行参数（不包括脚本名称）
-        
-    Returns:
-        解析后的参数命名空间
-    """
     parser = argparse.ArgumentParser(
         description="CAPSA - Cache Algorithm Performance Simulator & Analyzer",
         epilog="Examples:\n  python main.py -1          # Run workload 1\n  python main.py -1 -3 -5    # Run workloads 1, 3, 5\n  python main.py -all         # Run all workloads with summary table\n  python main.py             # Interactive menu",
@@ -353,20 +267,24 @@ def parse_arguments(argv: list[str]) -> argparse.Namespace:
 
 def main() -> None:
     """
-    缓存性能分析器的主入口点。
-    
-    支持两种模式：
-    1. 命令行模式：python main.py -1（运行负载1）
-    2. 交互模式：python main.py（显示菜单）
+    Mode 1: Interactive Menu (Recommended)
+    python main.py
+
+    Mode 2: Command Line Arguments
+    python main.py -1          # Run workload 1
+    python main.py -1 -3 -5    # Run workloads 1, 3, and 5
+    python main.py -9          # Run workload 9
+
+    Mode 3: Run all workloads and show summary table (Recommended for quick comparison)
+    python main.py -all        # Run all workloads and display a beautiful hit rate summary table
     """
-    # 检查是否为-all参数（需要在parse_arguments之前处理）
+    # check if -all parameter is provided
     if len(sys.argv) > 1 and (sys.argv[1].lower() == "-all" or sys.argv[1].lower() == "--all"):
         run_all_workloads_summary()
         return
     
     args = parse_arguments(sys.argv[1:])
     
-    # 解析负载参数
     selected_indices: List[int] = []
     workload_keys: List[str] = []
     
@@ -381,15 +299,15 @@ def main() -> None:
             print(f"Error: {e}")
             sys.exit(1)
     
-    # 如果未提供参数，显示交互菜单
+    # if no workloads are selected, show interactive menu
     if not selected_indices and not workload_keys:
         selected_indices = show_interactive_menu()
         if not selected_indices:
             return
     
-    # 运行选中的负载
+    # run selected workloads
     for idx in selected_indices:
-        recipe = TRACE_RECIPES[idx - 1]  # 转换为从0开始的索引
+        recipe = TRACE_RECIPES[idx - 1]  
         print(f"\n{'=' * 60}")
         print(f"Running Workload {idx}: {recipe.key}")
         print(f"{'=' * 60}\n")

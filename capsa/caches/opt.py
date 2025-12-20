@@ -7,7 +7,6 @@ from ..cache_base import Cache
 
 
 class OPTCache(Cache):
-    """具有预知未来能力的理论最优缓存策略。"""
 
     def __init__(self, size: int, trace: Optional[Iterable[int]] = None):
         super().__init__(size)
@@ -27,7 +26,6 @@ class OPTCache(Cache):
             self.future_positions[page_id].append(index)
 
     def prime(self, trace: Iterable[int]) -> None:
-        """当实例初始化时没有 trace，可通过 prime 预加载。"""
         self._preprocess_trace(trace)
 
     def _drop_current_reference(self, page_id: int) -> None:

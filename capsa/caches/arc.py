@@ -7,11 +7,10 @@ from ..cache_base import Cache
 
 
 class ARCCache(Cache):
-    """自适应替换缓存 ARC，实现 Figure 4 伪代码逻辑。"""
 
     def __init__(self, size: int):
         super().__init__(size)
-        self.T1: "OrderedDict[int, None]" = OrderedDict()  # 使用Ordered dict来实现LRU队列
+        self.T1: "OrderedDict[int, None]" = OrderedDict()  # use ordered dict the implement the LRU queue
         self.T2: "OrderedDict[int, None]" = OrderedDict()
         self.B1: "OrderedDict[int, None]" = OrderedDict()
         self.B2: "OrderedDict[int, None]" = OrderedDict()
@@ -38,8 +37,8 @@ class ARCCache(Cache):
                     self.B2.popitem(last=False)
 
     def _adapt_p_on_b1_hit(self) -> None:
-        if self.B1:
-            delta = max(1, len(self.B2) // len(self.B1))
+        if self.B1: 
+            delta = max(1, len(self.B2) // len(self.B1))  # if the size of B2 is smaller than B1, then p should increase 1
         else:
             delta = 1
         self.p = min(self.size, self.p + delta)
@@ -58,8 +57,7 @@ class ARCCache(Cache):
                 self.B1.popitem(last=False)
                 self._replace(None)
             else:
-                old, _ = self.T1.popitem(last=False) #表示弹出“最早的项”
-                # self.B1[old] = None
+                self.T1.popitem(last=False)
         else:
             grand_total = total + len(self.T2) + len(self.B2)
             if grand_total >= self.size:
@@ -67,7 +65,6 @@ class ARCCache(Cache):
                     self.B2.popitem(last=False)
                 self._replace(None)
 
-# 应该没有问题
     def access(self, page_id: int) -> bool:
         if page_id in self.T1:
             self.T1.pop(page_id, None)

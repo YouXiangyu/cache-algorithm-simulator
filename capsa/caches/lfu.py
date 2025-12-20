@@ -7,7 +7,6 @@ from ..cache_base import Cache
 
 
 class LFUCache(Cache):
-    """最不常用缓存策略，按频率和 LRU 共同淘汰。"""
 
     def __init__(self, size: int):
         super().__init__(size)

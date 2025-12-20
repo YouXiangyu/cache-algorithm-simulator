@@ -7,7 +7,6 @@ from ..cache_base import Cache
 
 
 class FIFOCache(Cache):
-    """先进先出缓存策略。"""
 
     def __init__(self, size: int):
         super().__init__(size)

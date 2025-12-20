@@ -1,4 +1,4 @@
-"""具体缓存算法实现集合�?"""
+"""Collection of concrete cache algorithm implementations."""
 
 from .arc import ARCCache  # noqa: F401
 from .fifo import FIFOCache  # noqa: F401
