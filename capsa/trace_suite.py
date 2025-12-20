@@ -6,9 +6,9 @@ Trace sequence generation for cache performance analysis.
 This module defines 7 workloads for comparing caching algorithms:
 - WL01-WL02: LFU-friendly (frequency patterns)
 - WL03: LRU-friendly (recency patterns)
-- WL05: FIFO-friendly (queue convoy / pollution patterns)
-- WL07: 2Q-friendly (scan + hot-set patterns)
-- WL08-WL09: ARC-friendly (adaptive patterns)
+- WL04: FIFO-friendly (queue convoy / pollution patterns)
+- WL05: 2Q-friendly (scan + hot-set patterns)
+- WL06-WL07: ARC-friendly (adaptive patterns)
 
 All workloads:
 - Generate exactly 50,000 requests
@@ -165,7 +165,7 @@ def _wl03_static_sliding_window() -> PageSequence:
     return seq[:TARGET_REQUESTS]
 
 
-def _wl05_fifo_convoy() -> PageSequence:
+def _wl04_fifo_convoy() -> PageSequence:
     """
     LFU poison: cache pollution pattern
 
@@ -200,7 +200,7 @@ def _wl05_fifo_convoy() -> PageSequence:
     return trim_to_target(seq, TARGET_REQUESTS)
 
 
-def _wl07_scan_sandwich() -> PageSequence:
+def _wl05_scan_sandwich() -> PageSequence:
     """
 
     Pattern composition:
@@ -271,7 +271,7 @@ def _wl07_scan_sandwich() -> PageSequence:
     return seq[:TARGET_REQUESTS]
 
 
-def _wl08_arc_mosaic() -> PageSequence:
+def _wl06_arc_mosaic() -> PageSequence:
     """
     Each round concatenates four simple segments to highlight ARC's adaptability across
     frequency / recency / cold-scan shifts:
@@ -280,7 +280,7 @@ def _wl08_arc_mosaic() -> PageSequence:
     3) High-frequency block B: pages 31-36 looped 6 times (36 requests) + bridge pages 90-105
     4) Cold scan: one-time access of 60 pages, then briefly return to the two hot sets
 
-    This structure is similar to WL09's multi-pattern mix, but smaller and simpler.
+    This structure is similar to WL07's multi-pattern mix, but smaller and simpler.
     """
     seq: PageSequence = []
 
@@ -324,7 +324,7 @@ def _wl08_arc_mosaic() -> PageSequence:
     return seq[:TARGET_REQUESTS]
 
 
-def _wl09_adaptive_mixed() -> PageSequence:
+def _wl07_adaptive_mixed() -> PageSequence:
     """
     Simple pattern: mix multiple access patterns to test ARC's adaptability.
     - Switch pattern every 5,000 requests:
@@ -441,8 +441,8 @@ TRACE_RECIPES: List[TraceRecipe] = [
         builder=_wl03_static_sliding_window,
     ),
     TraceRecipe(
-        key="WL05_FIFO_CONVOY",
-        filename="WL05_FIFO_CONVOY.trace",
+        key="WL04_FIFO_CONVOY",
+        filename="WL04_FIFO_CONVOY.trace",
         category="FIFO",
         goal="Queue convoy pattern: strict sequential loop + mild perturbation (strongly FIFO-friendly)",
         capacity_hint=(32,),
@@ -453,11 +453,11 @@ TRACE_RECIPES: List[TraceRecipe] = [
             "The perturbation aligns FIFO eviction order with the next round's convoy head",
             "FIFO ~90%, OPT ~92%; other algorithms are more affected by the perturbation",
         ],
-        builder=_wl05_fifo_convoy,
+        builder=_wl04_fifo_convoy,
     ),
     TraceRecipe(
-        key="WL07_SCAN_SANDWICH",
-        filename="WL07_SCAN_SANDWICH.trace",
+        key="WL05_SCAN_SANDWICH",
+        filename="WL05_SCAN_SANDWICH.trace",
         category="2Q",
         goal="Scan sandwich pattern: backup + online workload (2Q-friendly)",
         capacity_hint=(32,),
@@ -469,11 +469,11 @@ TRACE_RECIPES: List[TraceRecipe] = [
             "2Q uses A1in to filter scan pages while Am retains hot pages",
             "Expected: 2Q ~80%, ARC ~60%, LRU ~25%, LFU ~30%, FIFO ~25%",
         ],
-        builder=_wl07_scan_sandwich,
+        builder=_wl05_scan_sandwich,
     ),
     TraceRecipe(
-        key="WL08_ARC_MOSAIC",
-        filename="WL08_ARC_MOSAIC.trace",
+        key="WL06_ARC_MOSAIC",
+        filename="WL06_ARC_MOSAIC.trace",
         category="ARC",
         goal="ARC mosaic pattern: hot sets A/B + sliding window + cold scan (ARC-friendly)",
         capacity_hint=(32,),
@@ -484,11 +484,11 @@ TRACE_RECIPES: List[TraceRecipe] = [
             "Phase D: cold-scan 60 pages, then briefly return to both hot sets",
             "Expected: ARC ~68%, LRU ~48%, LFU ~50%, 2Q ~52%, FIFO ~38%",
         ],
-        builder=_wl08_arc_mosaic,
+        builder=_wl06_arc_mosaic,
     ),
     TraceRecipe(
-        key="WL09_ADAPTIVE_MIXED",
-        filename="WL09_ADAPTIVE_MIXED.trace",
+        key="WL07_ADAPTIVE_MIXED",
+        filename="WL07_ADAPTIVE_MIXED.trace",
         category="ARC",
         goal="Adaptive mixed pattern: switch among multiple patterns every 5,000 requests (ARC-friendly)",
         capacity_hint=(32,),
@@ -499,7 +499,7 @@ TRACE_RECIPES: List[TraceRecipe] = [
             "Switch pattern every 5,000 requests",
             "Expected: ARC ~60%, other algorithms ~30-50% (depending on the current pattern)",
         ],
-        builder=_wl09_adaptive_mixed,
+        builder=_wl07_adaptive_mixed,
     ),
 ]
 
