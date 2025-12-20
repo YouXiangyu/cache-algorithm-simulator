@@ -3,11 +3,10 @@ from __future__ import annotations
 """
 Trace sequence generation for cache performance analysis.
 
-This module defines 9 workloads for comparing caching algorithms:
+This module defines 7 workloads for comparing caching algorithms:
 - WL01-WL02: LFU-friendly (frequency patterns)
-- WL03-WL04: LRU-friendly (recency patterns)
+- WL03: LRU-friendly (recency patterns)
 - WL05: FIFO-friendly (queue convoy / pollution patterns)
-- WL06: ARC-friendly (frequency-recency switching)
 - WL07: 2Q-friendly (scan + hot-set patterns)
 - WL08-WL09: ARC-friendly (adaptive patterns)
 
@@ -166,61 +165,6 @@ def _wl03_static_sliding_window() -> PageSequence:
     return seq[:TARGET_REQUESTS]
 
 
-def _wl04_oscillating_window() -> PageSequence:
-    """
-    Workload 4: Oscillating sliding window (LRU-friendly)
-
-    Simple pattern: window size oscillates between 25 and 45.
-    - Small-window phase: window 25 (< cache size 32), lasts 2,500 requests
-    - Large-window phase: window 45 (> cache size 32), lasts 2,500 requests
-
-    Key: LRU performs well in the small-window phase; even in the large-window phase it still
-    tracks recency better than frequency-based policies.
-    """
-    seq: PageSequence = []
-    
-    small_window = 25  # small window size 25
-    large_window = 45  # large window size 45
-    max_page = 500
-    phase_length = 2500  # each phase 2500 requests
-    
-    window_start = 1
-    phase = 0
-    
-    while len(seq) < TARGET_REQUESTS:
-        # alternate window sizes
-        if phase % 2 == 0:
-            window_size = small_window
-        else:
-            window_size = large_window
-        
-        # generate window access for current phase
-        requests_in_phase = min(phase_length, TARGET_REQUESTS - len(seq))
-        windows_in_phase = requests_in_phase // window_size
-        
-        for i in range(windows_in_phase):
-            start = window_start + i
-            if start + window_size > max_page:
-                start = 1
-            for offset in range(window_size):
-                seq.append(start + offset)
-                if len(seq) >= TARGET_REQUESTS:
-                    break
-            if len(seq) >= TARGET_REQUESTS:
-                break
-        
-        # update window start position for next phase
-        window_start = (window_start + windows_in_phase) % (max_page - window_size + 1)
-        if window_start == 0:
-            window_start = 1
-        
-        phase += 1
-        if len(seq) >= TARGET_REQUESTS:
-            break
-    
-    return seq[:TARGET_REQUESTS]
-
-
 def _wl05_fifo_convoy() -> PageSequence:
     """
     LFU poison: cache pollution pattern
@@ -254,39 +198,6 @@ def _wl05_fifo_convoy() -> PageSequence:
         seq.extend(working_set)
         
     return trim_to_target(seq, TARGET_REQUESTS)
-
-
-def _wl06_adaptive_frequency_recency() -> PageSequence:
-    """
-    Alternating phases:
-    - Phase A: pages 1-10 looped 100 times (builds a frequency advantage)
-    - Phase B: 32-page sliding window, drifting each round (emphasizes recency)
-
-    Key: ARC can dynamically adjust T1/T2 sizes based on hit feedback to handle fast switches
-    between frequency and recency patterns.
-    """
-    seq: PageSequence = []
-
-    def phase_a() -> None:
-        """Frequency phase: loop over hot pages."""
-        for _ in range(10):
-            seq.extend(range(1, 11))
-
-    def phase_b(step_idx: int) -> None:
-        """Recency phase: 32-page sliding window."""
-        max_page = 500
-        window_size = 32
-        start = 1 + (step_idx * 7 % (max_page - window_size + 1))
-        seq.extend(range(start, start + window_size))
-
-    # each cycle = 100 + 32 = 132 requests
-    # total 50000 requests = 375 cycles
-    rounds = TARGET_REQUESTS // 132
-    for step_idx in range(rounds):
-        phase_a()
-        phase_b(step_idx)
-
-    return trim_to_target(seq, TARGET_REQUESTS, phase_a)
 
 
 def _wl07_scan_sandwich() -> PageSequence:
@@ -530,20 +441,6 @@ TRACE_RECIPES: List[TraceRecipe] = [
         builder=_wl03_static_sliding_window,
     ),
     TraceRecipe(
-        key="WL04_OSC_SW",
-        filename="WL04_OSC_SW.trace",
-        category="LRU",
-        goal="Oscillating sliding window: alternate small (25) and large (45) windows (LRU-friendly)",
-        capacity_hint=(32,),
-        script=[
-            "Small-window phase: window 25, 2,500 requests",
-            "Large-window phase: window 45, 2,500 requests",
-            "Alternate phases",
-            "Expected: LRU ~60%, ARC ~50%, LFU ~8%, 2Q ~12%",
-        ],
-        builder=_wl04_oscillating_window,
-    ),
-    TraceRecipe(
         key="WL05_FIFO_CONVOY",
         filename="WL05_FIFO_CONVOY.trace",
         category="FIFO",
@@ -557,21 +454,6 @@ TRACE_RECIPES: List[TraceRecipe] = [
             "FIFO ~90%, OPT ~92%; other algorithms are more affected by the perturbation",
         ],
         builder=_wl05_fifo_convoy,
-    ),
-    TraceRecipe(
-        key="WL06_ADAPTIVE_FREQ_RECENCY",
-        filename="WL06_ADAPTIVE_FREQ_RECENCY.trace",
-        category="ARC",
-        goal="Adaptive frequency-recency switching (formerly WL08, now WL06)",
-        capacity_hint=(32,),
-        script=[
-            "Phase A: loop pages 1-10 (100 requests)",
-            "Phase B: 32-page sliding window (32 requests), drifting each round",
-            "Alternate A/B to force switching between frequency and recency",
-            "ARC adjusts T1/T2 dynamically; LRU/LFU/2Q tend to bias toward one side",
-            "Expected: ARC ~65%, LFU ~50%, LRU ~55%, 2Q ~45%, FIFO ~40%",
-        ],
-        builder=_wl06_adaptive_frequency_recency,
     ),
     TraceRecipe(
         key="WL07_SCAN_SANDWICH",

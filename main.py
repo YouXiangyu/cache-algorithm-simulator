@@ -14,6 +14,7 @@ from capsa.trace_suite import TRACE_BY_KEY, TRACE_RECIPES, generate_trace
 CACHE_SIZE = 32
 ALGORITHMS = ["LFU", "LRU", "FIFO", "2Q", "ARC", "OPT"]
 NON_OPT_ALGOS = [algo for algo in ALGORITHMS if algo != "OPT"]
+TOTAL_WORKLOADS = len(TRACE_RECIPES)
 WORKLOAD_COL_WIDTH = 10
 VALUE_COL_WIDTH = 12
 ANSI_RESET = "\033[0m"
@@ -142,7 +143,7 @@ def display_workload_menu() -> None:
         print(f"   {clean_goal}")
     
     print("-" * 60)
-    print("\nEnter workload numbers (1-9) separated by spaces or commas (e.g., 1 3 5 or 1,3,5):")
+    print(f"\nEnter workload numbers (1-{TOTAL_WORKLOADS}) separated by spaces or commas (e.g., 1 3 5 or 1,3,5):")
     print("Or press Enter to run all workloads:")
 
 
@@ -196,7 +197,9 @@ def parse_workload_argument(arg: str) -> tuple[int | None, str | None]:
     if arg in TRACE_BY_KEY:
         return None, arg
     
-    raise ValueError(f"Unknown workload '{arg}'. Use workload numbers (1-9), workload keys, or -all to run all workloads")
+    raise ValueError(
+        f"Unknown workload '{arg}'. Use workload numbers (1-{TOTAL_WORKLOADS}), workload keys, or -all to run all workloads"
+    )
 
 
 def run_all_workloads_summary() -> None:
@@ -210,13 +213,13 @@ def run_all_workloads_summary() -> None:
     all_results: Dict[str, Dict[str, float]] = {}
     
     for idx, recipe in enumerate(TRACE_RECIPES, 1):
-        print(f"Running workload {idx}/9: {recipe.key}...", end=" ", flush=True)
+        print(f"Running workload {idx}/{TOTAL_WORKLOADS}: {recipe.key}...", end=" ", flush=True)
         results = run_workload(CACHE_SIZE, recipe.key, silent=True)
 
         workload_results = {}
         for result in results:
             workload_results[result.algorithm] = result.hit_rate
-        all_results[f"WL{idx:02d}"] = workload_results
+        all_results[recipe.key] = workload_results
         print("Done")
     
 
@@ -260,20 +263,20 @@ def parse_arguments(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "workloads",
         nargs="*",
-        help="Workload numbers (1-9) or workload keys. Use -1 for workload 1, etc.",
+        help=f"Workload numbers (1-{TOTAL_WORKLOADS}) or workload keys. Use -1 for workload 1, etc.",
     )
     return parser.parse_args(argv)
 
 
 def main() -> None:
-    """
+    f"""
     Mode 1: Interactive Menu (Recommended)
     python main.py
 
     Mode 2: Command Line Arguments
     python main.py -1          # Run workload 1
     python main.py -1 -3 -5    # Run workloads 1, 3, and 5
-    python main.py -9          # Run workload 9
+    python main.py -{TOTAL_WORKLOADS}          # Run workload {TOTAL_WORKLOADS}
 
     Mode 3: Run all workloads and show summary table (Recommended for quick comparison)
     python main.py -all        # Run all workloads and display a beautiful hit rate summary table
