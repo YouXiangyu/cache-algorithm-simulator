@@ -255,10 +255,37 @@ def run_all_workloads_summary() -> None:
     print("\n" + "=" * 80)
 
 
+def run_arc_sensitivity_analysis() -> None:
+    print("\n" + "=" * 80)
+    print("CAPSA - ARC Cache Size Sensitivity Analysis")
+    print("=" * 80)
+    print(f"\nWorkload: WL07_ADAPTIVE_MIXED")
+    print("Algorithm: ARC")
+    print("Cache Sizes: 2, 4, ..., 64")
+    print("Running sensitivity analysis, please wait...\n")
+
+    workload_key = "WL07_ADAPTIVE_MIXED"
+    trace = generate_trace(workload_key)
+    cache_sizes = list(range(2, 66, 2))
+    
+    print("\n" + "=" * 40)
+    print(f"{'Cache Size':<15} {'Hit Rate (%)':>15}")
+    print("=" * 40)
+    
+    for size in cache_sizes:
+        cache = ARCCache(size)
+        simulator = Simulator(size, trace)
+        result = simulator.run("ARC", cache)
+        
+        print(f"{size:<15} {result.hit_rate:>15.2f}")
+    
+    print("=" * 40 + "\n")
+
+
 def parse_arguments(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="CAPSA - Cache Algorithm Performance Simulator & Analyzer",
-        epilog="Examples:\n  python main.py -1          # Run workload 1\n  python main.py -1 -3 -5    # Run workloads 1, 3, 5\n  python main.py -all         # Run all workloads with summary table\n  python main.py             # Interactive menu",
+        epilog="Examples:\n  python main.py -1          # Run workload 1\n  python main.py -1 -3 -5    # Run workloads 1, 3, 5\n  python main.py -all         # Run all workloads with summary table\n  python main.py -arc        # Run ARC sensitivity analysis\n  python main.py             # Interactive menu",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -281,11 +308,18 @@ def main() -> None:
 
     Mode 3: Run all workloads and show summary table (Recommended for quick comparison)
     python main.py -all        # Run all workloads and display a beautiful hit rate summary table
+    
+    Mode 4: Run ARC sensitivity analysis
+    python main.py -arc        # Run ARC cache size sensitivity analysis for WL07
     """
-    # check if -all parameter is provided
-    if len(sys.argv) > 1 and (sys.argv[1].lower() == "-all" or sys.argv[1].lower() == "--all"):
-        run_all_workloads_summary()
-        return
+    if len(sys.argv) > 1:
+        arg_lower = sys.argv[1].lower()
+        if arg_lower in ["-all", "--all"]:
+            run_all_workloads_summary()
+            return
+        elif arg_lower in ["-arc", "--arc"]:
+            run_arc_sensitivity_analysis()
+            return
     
     args = parse_arguments(sys.argv[1:])
     
